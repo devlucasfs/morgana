@@ -4,7 +4,6 @@
 #include "sys.hpp"
 #include <cstring>
 #include <filesystem>
-#include <iostream>
 #include <string>
 
 #define MHz(x) ((x) * 1000000)
@@ -32,27 +31,28 @@ public:
         if( std::filesystem::exists(eva_path) ) {
             eva driver(eva_path);
             try {
-                auto n = driver.get<std::string>("target", "name");
-                if( n.first ) name = n.second;
+                {   auto [exist, data] = driver.get<std::string>("target", "name");
+                    if( exist ) name = data;
+                }
 
-                auto o = driver.get<eva::map>("target", "output");
-                if( o.first ) {
-                    auto f = o.second.operator[]<std::string>("format");
-                    if( f.first ) output = (
-                        f.second == "native-bin" || f.second == "shared-object" || f.second == "static-archive"
-                        ? f.second
+                auto [exist, data] = driver.get<eva::map>("target", "output");
+                if( exist ) {
+                    auto [exist, format] = data.operator[]<std::string>("format");
+                    if( exist ) output = (
+                        format == "native-bin" || format == "shared-object" || format == "static-archive"
+                        ? format
                         : "native-bin"
                     );
                 }
             } catch(...) {}
         }
 
-        int i = 1;
-        for(; i < argc; i++ ) {
+        for( int i = 1; i < argc; i++ ) {
             char *arg = argv[i];
-            if( std::strcmp(argv[i], "-m") == 0 && (i + 1) < argc ) main = std::string(argv[++i]);
-            if( std::strcmp(argv[i], "-o") == 0 && (i + 1) < argc ) target = std::string(argv[++i]);
-            if( std::strcmp(argv[i], "-v") == 0 ) verbose = true;
+            if( std::strcmp(argv[i], "-m")  == 0 && (i + 1) < argc ) main = std::string(argv[++i]);
+            if( std::strcmp(argv[i], "-o")  == 0 && (i + 1) < argc ) target = std::string(argv[++i]);
+            if( std::strcmp(argv[i], "-of") == 0 && (i + 1) < argc ) output = std::string(argv[++i]);
+            if( std::strcmp(argv[i], "-v")  == 0 ) verbose = true;
         }
 
         CompilerParams params{};
@@ -62,6 +62,7 @@ public:
         params.target = target;
         params.main = main;
         params.argv = argv;
+        params.verbose = verbose;
 
         return params;
     }

@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -17,7 +18,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <string>
-std::string NIL_FD_BACKEND = " > NUL 2>&1 ";
+#define NIL_FD_BACKEND std::string(params.verbose ? "" : " > NUL 2>&1 ")
 
 #define CAND(x, y) (__cmd_exists_win(#x) && (y))
 inline bool __cmd_exists_win(const std::string& name) {
@@ -45,13 +46,12 @@ inline bool __cmd_exists_win(const std::string& name) {
     return false;
 }
 
-
 #else
 #include <unistd.h>
 #include <cstdlib>
 #include <sstream>
 #include <string>
-std::string NIL_FD_BACKEND = " > /dev/null 2>&1 ";
+#define NIL_FD_BACKEND std::string(params.verbose ? "" : " > /dev/null 2>&1 ")
 #define CAND(x, y) (__cmd_exists_unix(#x) && (y))
 inline bool __cmd_exists_unix(const std::string& name) {
     const char* path = std::getenv("PATH");
@@ -67,6 +67,17 @@ inline bool __cmd_exists_unix(const std::string& name) {
     return false;
 }
 #endif
+
+#define TERMINAL_RUNNER(command, message) {                                     \
+    std::string runner = (command) + NIL_FD_BACKEND;                            \
+    if( params.verbose ) CompilerOutputs::Info("Running: " + (command) + "\n"); \
+    if( std::system(runner.c_str()) != 0 ) CompilerOutputs::Fatal(message);     \
+}
+
+#define TERMINAL_RUNNER_RET(x, y) { \
+    TERMINAL_RUNNER(x, y);          \
+    return;                         \
+}
 
 const bool end = true;
 
@@ -91,30 +102,28 @@ struct Backend {
 
         switch (checkout) {
             case LINUX: {
-                DEFINE_SUFFIXES(std::string(), ".so", ".a");
-
                 /* Compile from x86_64-linux without cross-compilation.
                  *
                  * 1. Use 'as' to compile the Morgana IR assembly output to an object file.
-                 * 2. Use 'gcc' to compile the C FFI source to an object file (if enabled).
-                 * 3. Use 'ld' or 'ar' to link the object files together into an executable,
+                 * 2. Use 'ld' or 'ar' to link the object files together into an executable,
                  *    shared-object or a static-archive.
                  */
                 if( sys.arch == "x86_64" && params.target == "x86_64-linux" ) {
-                    std::string as = "as \"" + s + "\" -o \"" + o + "\"" + NIL_FD_BACKEND;
-                    if( std::system(as.c_str()) != 0 ) CompilerOutputs::Fatal("Failed to compile Morgana IR to object file using as");
+                    DEFINE_SUFFIXES(std::string(), ".so", ".a");
+                    TERMINAL_RUNNER(
+                        "as \"" + s + "\" -o \"" + o + "\"",
+                        "Failed to compile Morgana IR to object file using as"
+                    );
 
-                    if( params.output == "native-bin" || params.output == "shared-object" ) {
-                        std::string ld = "ld " + std::string(params.output == "native-bin" ? "" : "-shared ") + "\"" + o + "\" -o \"" + exe + "\"" + NIL_FD_BACKEND;
-                        if( std::system(ld.c_str()) != 0 ) CompilerOutputs::Fatal("Failed to link Morgana IR to elf file using ld");
-                        return;
-                    }
+                    if( params.output == "native-bin" || params.output == "shared-object" ) TERMINAL_RUNNER(
+                        "ld " + std::string(params.output == "native-bin" ? "" : "-shared -fPIC ") + "\"" + o + "\" -o \"" + exe + "\"",
+                        "Failed to link Morgana IR to elf file using ld"
+                    );
 
-                    if( params.output == "static-archive" ) {
-                        std::string ld = "ar rcs \"" + exe + "\" \"" + o + "\"" + NIL_FD_BACKEND;
-                        if( std::system(ld.c_str()) != 0 ) CompilerOutputs::Fatal("Failed to link Morgana IR to static library file using ar");
-                        return;
-                    }
+                    if( params.output == "static-archive" ) TERMINAL_RUNNER(
+                        "ar rcs \"" + exe + "\" \"" + o + "\"",
+                        "Failed to link Morgana IR to static library file using ar"
+                    );
                 };
 
                 /* Cross-compilation for x86_64-windows using MinGW-w64 toolchain.
