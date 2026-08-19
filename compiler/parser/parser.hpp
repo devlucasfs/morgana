@@ -4,6 +4,7 @@
 #include "call.hpp"
 #include "checkouts.hpp"
 #include "function.hpp"
+#include "movement.hpp"
 #include "puts.hpp"
 #include "ret.hpp"
 #include "statements.hpp"
@@ -14,9 +15,9 @@
 #include "../compiler_outputs.hpp"
 #include "types/integer.hpp"
 #include <cstdint>
-#include <iostream>
 #include <optional>
 #include <regex>
+#include <sstream>
 #include <stack>
 #include <string>
 #include <tuple>
@@ -40,6 +41,8 @@
     X(ALLOC,    200) \
     X(STORE,    201) \
     X(LOAD,     202) \
+    X(MOVEMENT, 300) \
+    X(SYSCALL,  301) \
 
 #define X(name, id) name = id,
 enum parse_kind : int32_t { MORGANA_PARSER_NODE_FIELDS };
@@ -60,6 +63,7 @@ using ParseResult = std::tuple<parse_kind, std::variant<
     puts_t,
     ret_t,
     call_t,
+    movement_t,
 
     /* declarations */
     declaration<symbol>,
@@ -116,7 +120,7 @@ ParseResults parse(std::vector<std::string> tokens) {
 
                 while(std::getline(ss, item, ',')) {
                     symbol sym = sfrom(item);
-                    if(! std::holds_alternative<std::monostate>(sym) )
+                    if( std::holds_alternative<std::monostate>(sym) )
                     /* -> */ CompilerOutputs::Fatal("Invalid argument: " + item);
                     symbols.push_back(sym);
                 }
@@ -320,6 +324,27 @@ void puts(MORGANA_STATEMENT_FUNCTION_ARGUMENTS) {
 
     std::string str = top.at(value);
     result.push_back({ parse_kind::PUTS, puts_t(value, interpret_string(str) - 1) });
+}
+
+void syscall(MORGANA_STATEMENT_FUNCTION_ARGUMENTS) {
+    auto err = [&]() { CompilerOutputs::Fatal("After a `syscall` statement you need to place a the syscall registers values in the right position."); };
+    if( i + 1 >= tokens.size() ) err();
+
+    int x = 1;
+    while(true) {
+        if( i + x >= tokens.size() ) err();
+        std::string value = tokens.at(i + x);
+
+        bool should_break = value.at(value.size() - 1) != ',';
+        value = (should_break) ? value : value.substr(0, value.size() - 1);
+
+        result.push_back({ parse_kind::MOVEMENT, movement_t(x++, value) });
+
+        if( should_break ) break;
+    }
+
+    i += x;
+    result.push_back({ parse_kind::SYSCALL, std::monostate() });
 }
 
 void constant(MORGANA_STATEMENT_FUNCTION_ARGUMENTS) {

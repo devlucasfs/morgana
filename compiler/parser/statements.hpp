@@ -9,6 +9,7 @@ const uint8_t whatever = 67;
     X("load",     true,     load)           \
                                             \
     X("comptime", false,    comptime)       \
+    X("syscall",  false,    syscall)        \
     X("store",    false,    store)          \
     X("puts",     false,    puts)           \
     X("ret",      false,    ret)            \

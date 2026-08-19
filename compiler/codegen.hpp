@@ -8,6 +8,8 @@
 #include <stack>
 #include <stddef.h>
 #include "parser/call.hpp"
+#include "parser/checkouts.hpp"
+#include "parser/movement.hpp"
 #include "parser/ret.hpp"
 #include "parser/statements.hpp"
 #include "parser/types/integer.hpp"
@@ -31,6 +33,8 @@
 extern "C" {
 #include "libs/runa.h"
 }
+
+std::vector<char> extensor_path;
 
 bool is_number(std::string &str)
 { return std::regex_match(str, std::regex("[-]?[0-9]+")); }
@@ -196,10 +200,10 @@ std::string codegen(CompilerParams& params, ParseResults ast) {
     Runa *runa = runa_start();
     runa_needs(runa, write, writeln, tabs);
 
-    std::vector<char> extensorPathCStr(extensorPath.begin(), extensorPath.end());
-    extensorPathCStr.push_back('\0');
+    extensor_path = std::vector<char>(extensorPath.begin(), extensorPath.end());
+    extensor_path.push_back('\0');
 
-    runa_loadfile(runa, extensorPathCStr.data());
+    runa_loadfile(runa, extensor_path.data());
 
     int iteration_count = 0;
     while(true) {
@@ -280,6 +284,153 @@ void pendent_strings_make(Runa *runa) {
     reset_fields();
 }
 
+/* `stackpos_format` Runa function to get the format
+ *  a stack load in the Choosed Assembly syntax.
+ *
+ * For example:
+ * - AT&T 64 bits assembly syntax.
+ *
+ * ```lua
+ * function stackpos_format(data)
+ *     return  "-" .. data.pos .. "(%rbp)"
+ * end
+ * ```
+ * */
+
+int stackpos_raw;
+void stackpos_format_cap(Runa *runa) {
+    runa_push_field(runa, (char*) "pos", RunaValueFFI {
+        runa_integer, RunaValueData { .integer = (size_t) stackpos_raw }
+    });
+
+    runa_push_table(runa, (char*) "data", 1);
+}
+
+std::string stackpos_format(int pos) {
+    stackpos_raw = pos;
+
+    Runa *runa = runa_start();
+    runa_loadfile(runa, extensor_path.data());
+
+    RunaValueFFI value = runa_spawn_function(runa, (char*) "stackpos_format", (runa_callback) stackpos_format_cap);
+    char *str = runa_value_to_string(runa, value);
+    std::string cxx(str);
+
+    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
+    runa_value_free(value);
+    return cxx;
+}
+
+int register_raw, why_raw;
+void registers_cap(Runa *runa) {
+    runa_push_field(runa, (char*) "register", RunaValueFFI {
+        runa_integer, RunaValueData { .integer = (size_t) register_raw }
+    });
+
+    runa_push_field(runa, (char*) "why", RunaValueFFI {
+        runa_integer, RunaValueData { .integer = (size_t) why_raw }
+    });
+
+    runa_push_table(runa, (char*) "data", 2);
+
+    runa_push_field(runa, (char*) "syscall", RunaValueFFI {
+        runa_integer, RunaValueData { .integer = (size_t) 0 }
+    });
+
+    runa_push_field(runa, (char*) "arguments", RunaValueFFI {
+        runa_integer, RunaValueData { .integer = (size_t) 1 }
+    });
+
+    runa_push_table(runa, (char*) "extra", 2);
+}
+
+std::string registers(int pos, int syscall = 0) {
+    register_raw = pos;
+    why_raw = syscall;
+
+    Runa *runa = runa_start();
+    runa_loadfile(runa, extensor_path.data());
+
+    RunaValueFFI value = runa_spawn_function(runa, (char*) "registers", (runa_callback) registers_cap);
+    char *str = runa_value_to_string(runa, value);
+    std::string cxx(str);
+
+    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
+    runa_value_free(value);
+    return cxx;
+}
+
+int function_id_raw;
+std::string identifier_raw;
+void segdata_cap(Runa *runa) {
+    runa_push_field(runa, (char*) "internal", RunaValueFFI {
+        runa_integer, RunaValueData { .integer = (size_t) function_id_raw }
+    });
+
+    runa_push_field(runa, (char*) "identifier", RunaValueFFI {
+        runa_string, RunaValueData { .string = (char*) identifier_raw.c_str() }
+    });
+
+    runa_push_table(runa, (char*) "data", 2);
+}
+
+std::string segdata(std::string identifier) {
+    function_id_raw = function_id;
+    identifier_raw = identifier;
+
+    Runa *runa = runa_start();
+    runa_loadfile(runa, extensor_path.data());
+
+    RunaValueFFI value = runa_spawn_function(runa, (char*) "segdata", (runa_callback) segdata_cap);
+    char *str = runa_value_to_string(runa, value);
+    std::string cxx(str);
+
+    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
+    runa_value_free(value);
+    return cxx;
+}
+
+std::string literal_raw;
+void literal_cap(Runa *runa) {
+    runa_push_field(runa, (char*) "literal", RunaValueFFI {
+        runa_string, RunaValueData { .string = (char*) literal_raw.c_str() }
+    });
+
+    runa_push_table(runa, (char*) "data", 1);
+}
+
+std::string literal(std::string literal) {
+    literal_raw = literal;
+
+    Runa *runa = runa_start();
+    runa_loadfile(runa, extensor_path.data());
+
+    RunaValueFFI value = runa_spawn_function(runa, (char*) "literal", (runa_callback) literal_cap);
+    char *str = runa_value_to_string(runa, value);
+    std::string cxx(str);
+
+    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
+    runa_value_free(value);
+    return cxx;
+}
+
+std::pair<bool, std::string> load_data(Symbols& symbols, std::string value) {
+    for( auto& [name, content] : strings_stack.top() ) {
+        if( name == value ) {
+            return { true, segdata(value) };
+        }
+    }
+
+    auto data = starts_expr(value);
+    if( data == ST_NUMBER ) return { false, literal(value) };
+
+    if( data == ST_IDENTIFIER ) {
+        SPOS symbol = symbols.lookup(value);
+        return { false, stackpos_format(symbol.stack_position) };
+    }
+
+    return { false, "IDK" };
+}
 
 void table(Symbols& symbols, Runa *runa, ParseResult& node) {
     runa_push_field(runa, (char*) "kind", RunaValueFFI {
@@ -290,6 +441,19 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
     parse_kind kind = first(node);
 
     switch(kind) {
+        case parse_kind::MOVEMENT: {
+            auto [ reg, value ] = std::get<movement_t>(second(node));
+            add_fields(2);
+
+            runa_push_field(runa, (char*) "register",
+            RunaValueFFI { runa_string, RunaValueData { .string = (char*) registers(reg).c_str() }});
+
+            auto data = load_data(symbols, value);
+
+            runa_push_field(runa, (char*) "data",
+            RunaValueFFI { runa_string, RunaValueData { .string = (char*) data.second.c_str() }});
+        } break;
+
         case parse_kind::FUNCTION: {
             symbols.stack.push({});
             symbols.preprocessor.push();
@@ -375,7 +539,7 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
 
             add_fields(3);
             runa_push_field(runa, (char*) "dest",
-            RunaValueFFI { runa_integer, RunaValueData { .integer = (size_t) dest.stack_position }});
+            RunaValueFFI { runa_string, RunaValueData { .string = (char*) stackpos_format(dest.stack_position).c_str() }});
 
             bool constant_string = false;
             for( auto& [name, _] : strings_stack.top() ) {
@@ -397,7 +561,7 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
 
             auto src_value = RunaValueFFI{};
             if( constant_string ) {
-                std::string identifier = ".fn" + std::to_string(function_id) + "." + store.value;
+                std::string identifier = segdata(store.value);
                 src_value =  RunaValueFFI {
                     runa_string,
                     RunaValueData { .string = identifier.c_str() }
@@ -409,16 +573,16 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
 
             if( is_number(store.value) ) {
                 src_value = RunaValueFFI {
-                    runa_integer,
-                    RunaValueData { .integer = std::stoull(store.value) }
+                    runa_string,
+                    RunaValueData { .string = (char*) literal(store.value).c_str() }
                 };
             }
 
             if( is_identifier(store.value) ) {
                 auto addr = symbols.lookup(store.value).stack_position;
                 src_value = RunaValueFFI {
-                    runa_integer,
-                    RunaValueData { .integer = (size_t) addr }
+                    runa_string,
+                    RunaValueData { .string = (char*) stackpos_format(addr).c_str() }
                 };
             }
 
