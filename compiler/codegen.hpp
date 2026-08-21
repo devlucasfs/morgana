@@ -21,6 +21,7 @@
 #include "parser/storage.hpp"
 #include <string>
 #include <algorithm>
+#include <type_traits>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -49,6 +50,89 @@ using iterator = std::stack<iteration>;
 
 std::shared_ptr<iteration> current;
 iterator branches;
+
+#define NOTHING_MC(...)
+#define MORGANA_RUNA_COPY(_, dest, src, ...) dest = src;
+
+#define MORGANA_RUNA_BASIC_UTIL_FUNCTIONS(identifier, runa_id)                                         \
+std::string identifier( MORGANA_RUNA_##identifier##_FIELDS(Y, NOTHING_MC) size_t _ = 0 ) {             \
+    MORGANA_RUNA_##identifier##_FIELDS(MORGANA_RUNA_COPY, NOTHING_MC)                                  \
+                                                                                                       \
+    Runa *runa = runa_start();                                                                         \
+    runa_loadfile(runa, extensor_path.data());                                                         \
+                                                                                                       \
+    RunaValueFFI value = runa_spawn_function(runa, (char*) runa_id, (runa_callback) identifier##_cap); \
+    char *str = runa_value_to_string(runa, value);                                                     \
+    std::string cxx(str);                                                                              \
+                                                                                                       \
+    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);                               \
+    runa_value_free(value);                                                                            \
+    return cxx;                                                                                        \
+}
+
+#define MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_CAP(identifier, runa_id, argc)                               \
+void identifier##_cap(Runa *runa) {                                                                    \
+    MORGANA_RUNA_##identifier##_FIELDS(Y, E);                                                          \
+    runa_push_table(runa, (char*) "data", argc);                                                       \
+}
+
+#define MORGANA_RUNA_stackpos_FIELDS(Y, E)                                                             \
+Y(int, stackpos_raw, pos, (int(0)), "pos")                                                             \
+
+#define MORGANA_RUNA_literal_FIELDS(Y, E)                                                              \
+Y(std::string, literal_raw, literal, "", "literal")                                                    \
+
+#define MORGANA_RUNA_segdata_FIELDS(Y, E)                                                              \
+Y(std::string, segdata_str_raw, identifier, "", "identifier")                                          \
+Y(int,         segdata_int_raw, load,       0,  "load")                                                \
+E(int,         function_id,     "internal")
+
+#define MORGANA_RUNA_registers_FIELDS(Y, E)                                                            \
+Y(int, register_raw,      load, 0, "register")                                                         \
+Y(int, registers_why_raw, why,  0, "why")
+
+#define MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_FIELDS                                                       \
+    X(registers,  "registers", 2)                                                                      \
+    X(stackpos,   "stackpos",  1)                                                                      \
+    X(segdata,    "segdata",   3)                                                                      \
+    X(literal,    "literal",   1)                                                                      \
+
+#define Y(type, id, _, value, ...) type id = value;
+#define X(identifier, runa_id, argc) \
+MORGANA_RUNA_##identifier##_FIELDS(Y, NOTHING_MC)
+MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_FIELDS
+#undef Y
+#undef X
+
+template <typename T>
+inline void runa_push(Runa* runa, char* identifier, T data) {
+    if constexpr( std::is_same_v<T, std::string> )
+        runa_push_field(runa, identifier,
+        RunaValueFFI { runa_string, RunaValueData { .string = (char*) data.c_str() }});
+
+    if constexpr( std::is_same_v<T, int> )
+        runa_push_field(runa, identifier,
+        RunaValueFFI { runa_integer, RunaValueData { .integer = (size_t) data }});
+}
+
+#define Y(T, cxx, id, data, runa_id) runa_push(runa, runa_id, cxx);
+#define E(T, cxx, runa_id) runa_push(runa, runa_id, cxx);
+
+#define X(identifier, runa_id, argc) \
+MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_CAP(identifier, runa_id, argc)
+MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_FIELDS
+#undef X
+#undef Y
+#undef E
+
+#define E(...)
+#define Y(type, _, id, ...) type id,
+#define X(identifier, runa_id, argc) \
+MORGANA_RUNA_BASIC_UTIL_FUNCTIONS(identifier, runa_id)
+MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_FIELDS
+#undef E
+#undef X
+#undef Y
 
 struct Preprocessor {
     using value = std::variant<std::monostate, size_t, std::string>;
@@ -270,7 +354,7 @@ void pendent_strings_make(Runa *runa) {
         RunaValueFFI { runa_integer, RunaValueData { .integer = parse_kind::STRINGS }});
 
         runa_push_field(runa, (char*) "identifier",
-        RunaValueFFI { runa_string, RunaValueData { .string = (".fn" + std::to_string(function_id) + "." + name).c_str() }});
+        RunaValueFFI { runa_string, RunaValueData { .string = segdata(name, 0).c_str() }});
 
         runa_push_field(runa, (char*) "value",
         RunaValueFFI { runa_string, RunaValueData { .string = value.c_str() }});
@@ -284,140 +368,10 @@ void pendent_strings_make(Runa *runa) {
     reset_fields();
 }
 
-/* `stackpos_format` Runa function to get the format
- *  a stack load in the Choosed Assembly syntax.
- *
- * For example:
- * - AT&T 64 bits assembly syntax.
- *
- * ```lua
- * function stackpos_format(data)
- *     return  "-" .. data.pos .. "(%rbp)"
- * end
- * ```
- * */
-
-int stackpos_raw;
-void stackpos_format_cap(Runa *runa) {
-    runa_push_field(runa, (char*) "pos", RunaValueFFI {
-        runa_integer, RunaValueData { .integer = (size_t) stackpos_raw }
-    });
-
-    runa_push_table(runa, (char*) "data", 1);
-}
-
-std::string stackpos_format(int pos) {
-    stackpos_raw = pos;
-
-    Runa *runa = runa_start();
-    runa_loadfile(runa, extensor_path.data());
-
-    RunaValueFFI value = runa_spawn_function(runa, (char*) "stackpos_format", (runa_callback) stackpos_format_cap);
-    char *str = runa_value_to_string(runa, value);
-    std::string cxx(str);
-
-    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
-    runa_value_free(value);
-    return cxx;
-}
-
-int register_raw, why_raw;
-void registers_cap(Runa *runa) {
-    runa_push_field(runa, (char*) "register", RunaValueFFI {
-        runa_integer, RunaValueData { .integer = (size_t) register_raw }
-    });
-
-    runa_push_field(runa, (char*) "why", RunaValueFFI {
-        runa_integer, RunaValueData { .integer = (size_t) why_raw }
-    });
-
-    runa_push_table(runa, (char*) "data", 2);
-
-    runa_push_field(runa, (char*) "syscall", RunaValueFFI {
-        runa_integer, RunaValueData { .integer = (size_t) 0 }
-    });
-
-    runa_push_field(runa, (char*) "arguments", RunaValueFFI {
-        runa_integer, RunaValueData { .integer = (size_t) 1 }
-    });
-
-    runa_push_table(runa, (char*) "extra", 2);
-}
-
-std::string registers(int pos, int syscall = 0) {
-    register_raw = pos;
-    why_raw = syscall;
-
-    Runa *runa = runa_start();
-    runa_loadfile(runa, extensor_path.data());
-
-    RunaValueFFI value = runa_spawn_function(runa, (char*) "registers", (runa_callback) registers_cap);
-    char *str = runa_value_to_string(runa, value);
-    std::string cxx(str);
-
-    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
-    runa_value_free(value);
-    return cxx;
-}
-
-int function_id_raw;
-std::string identifier_raw;
-void segdata_cap(Runa *runa) {
-    runa_push_field(runa, (char*) "internal", RunaValueFFI {
-        runa_integer, RunaValueData { .integer = (size_t) function_id_raw }
-    });
-
-    runa_push_field(runa, (char*) "identifier", RunaValueFFI {
-        runa_string, RunaValueData { .string = (char*) identifier_raw.c_str() }
-    });
-
-    runa_push_table(runa, (char*) "data", 2);
-}
-
-std::string segdata(std::string identifier) {
-    function_id_raw = function_id;
-    identifier_raw = identifier;
-
-    Runa *runa = runa_start();
-    runa_loadfile(runa, extensor_path.data());
-
-    RunaValueFFI value = runa_spawn_function(runa, (char*) "segdata", (runa_callback) segdata_cap);
-    char *str = runa_value_to_string(runa, value);
-    std::string cxx(str);
-
-    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
-    runa_value_free(value);
-    return cxx;
-}
-
-std::string literal_raw;
-void literal_cap(Runa *runa) {
-    runa_push_field(runa, (char*) "literal", RunaValueFFI {
-        runa_string, RunaValueData { .string = (char*) literal_raw.c_str() }
-    });
-
-    runa_push_table(runa, (char*) "data", 1);
-}
-
-std::string literal(std::string literal) {
-    literal_raw = literal;
-
-    Runa *runa = runa_start();
-    runa_loadfile(runa, extensor_path.data());
-
-    RunaValueFFI value = runa_spawn_function(runa, (char*) "literal", (runa_callback) literal_cap);
-    char *str = runa_value_to_string(runa, value);
-    std::string cxx(str);
-
-    runa_optional(RUNA_FREE_STRING_BY_VALUE, runa_str_free, str, value);
-    runa_value_free(value);
-    return cxx;
-}
-
 std::pair<bool, std::string> load_data(Symbols& symbols, std::string value) {
     for( auto& [name, content] : strings_stack.top() ) {
         if( name == value ) {
-            return { true, segdata(value) };
+            return { true, segdata(value, 1) };
         }
     }
 
@@ -426,7 +380,7 @@ std::pair<bool, std::string> load_data(Symbols& symbols, std::string value) {
 
     if( data == ST_IDENTIFIER ) {
         SPOS symbol = symbols.lookup(value);
-        return { false, stackpos_format(symbol.stack_position) };
+        return { false, stackpos(symbol.stack_position) };
     }
 
     return { false, "IDK" };
@@ -446,7 +400,7 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
             add_fields(2);
 
             runa_push_field(runa, (char*) "register",
-            RunaValueFFI { runa_string, RunaValueData { .string = (char*) registers(reg).c_str() }});
+            RunaValueFFI { runa_string, RunaValueData { .string = (char*) registers(reg, 1).c_str() }});
 
             auto data = load_data(symbols, value);
 
@@ -539,7 +493,7 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
 
             add_fields(3);
             runa_push_field(runa, (char*) "dest",
-            RunaValueFFI { runa_string, RunaValueData { .string = (char*) stackpos_format(dest.stack_position).c_str() }});
+            RunaValueFFI { runa_string, RunaValueData { .string = (char*) stackpos(dest.stack_position).c_str() }});
 
             bool constant_string = false;
             for( auto& [name, _] : strings_stack.top() ) {
@@ -561,7 +515,7 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
 
             auto src_value = RunaValueFFI{};
             if( constant_string ) {
-                std::string identifier = segdata(store.value);
+                std::string identifier = segdata(store.value, 1);
                 src_value =  RunaValueFFI {
                     runa_string,
                     RunaValueData { .string = identifier.c_str() }
@@ -582,7 +536,7 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
                 auto addr = symbols.lookup(store.value).stack_position;
                 src_value = RunaValueFFI {
                     runa_string,
-                    RunaValueData { .string = (char*) stackpos_format(addr).c_str() }
+                    RunaValueData { .string = (char*) stackpos(addr).c_str() }
                 };
             }
 

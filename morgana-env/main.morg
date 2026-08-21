@@ -2,8 +2,5 @@ comptime _start
 
 void main() {
 _1 = constant "Hello, world\n"
-a = alloc ptr
-store a _1
-b = load a
-syscall 1, 1, 14, b
+syscall 1, 1, 14, _1
 }
