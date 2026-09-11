@@ -125,12 +125,10 @@ MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_FIELDS
 #undef Y
 #undef E
 
-#define E(...)
 #define Y(type, _, id, ...) type id,
 #define X(identifier, runa_id, argc) \
 MORGANA_RUNA_BASIC_UTIL_FUNCTIONS(identifier, runa_id)
 MORGANA_RUNA_BASIC_UTIL_FUNCTIONS_FIELDS
-#undef E
 #undef X
 #undef Y
 
@@ -479,7 +477,7 @@ void table(Symbols& symbols, Runa *runa, ParseResult& node) {
             symbols.add(identifier, to);
         } break;
 
-        case parse_kind::COMPTIMNE: {
+        case parse_kind::COMPTIME: {
             auto data = std::get<std::string>(second(node));
             add_field();
             runa_push_field(runa, (char*) "instruction",

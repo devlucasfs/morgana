@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include "./parser/parser.hpp"
 
 extern "C" {
     #include "libs/runa.h"
@@ -21,7 +22,18 @@ void runa_needs(Runa *runa, runa_callback write, runa_callback writeln, runa_cal
     runa_push_function(runa, (char*) "tabs", (runa_callback)tabs, 1);
 }
 
-void cap(Runa *runa) { runa_push_table(runa, (char*) "node", amount); }
+void cap(Runa *runa) {
+    #define Y(id) #id
+    #define X(id, num)                                                         \
+    add_field();                                                               \
+    runa_push_field(runa, Y(STM_##id),                                         \
+    RunaValueFFI { runa_integer, RunaValueData { .integer = (size_t) num }});
+    MORGANA_PARSER_NODE_FIELDS
+    #undef X
+    #undef Y
+
+    runa_push_table(runa, (char*) "data", amount);
+}
 
 void print(Runa *runa) {
     RunaValueFFI arg = runa_peek_arg(runa, 0);

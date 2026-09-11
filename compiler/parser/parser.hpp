@@ -33,7 +33,7 @@
     X(STRINGS,   1)  \
     X(DATA,      2)  \
     X(TEXT,      3)  \
-    X(COMPTIMNE, 4)  \
+    X(COMPTIME,  4)   \
     X(FUNCTION, 100) \
     X(EPILOGUE, 101) \
     X(RET,      102) \
@@ -374,6 +374,6 @@ void comptime(MORGANA_STATEMENT_FUNCTION_ARGUMENTS) {
 
     if( i + 1 >= tokens.size() ) err();
     std::string value = tokens.at(++i);
-    result.push_back({ parse_kind::COMPTIMNE, value });
+    result.push_back({ parse_kind::COMPTIME, value });
     return;
 }
