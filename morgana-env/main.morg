@@ -1,6 +1,10 @@
-comptime _start
+extern { ptr, u64, u64, u64, ptr, ptr, ptr } arena_start(u64)
+extern ptr arena_alloc(ptr, u64)
+extern void arena_dump(ptr, ptr)
+extern void arena_destroy(ptr)
 
-void main() {
-_1 = constant "Hello, world\n"
-syscall 1, 1, 14, _1
+void _start() {
+    pool = call arena_start(1024)
+    data = alloc i32
+    store data 312
 }
