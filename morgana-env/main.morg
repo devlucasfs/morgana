@@ -1,10 +1,22 @@
-extern { ptr, u64, u64, u64, ptr, ptr, ptr } arena_start(u64)
-extern ptr arena_alloc(ptr, u64)
-extern void arena_dump(ptr, ptr)
-extern void arena_destroy(ptr)
+extern { ptr, u64, u64, u64, ptr, ptr, ptr } nashj_start(u64)
+extern ptr nashj_alloc(ptr, u64)
+extern void nashj_dump(ptr, ptr)
+extern void nashj_destroy(ptr)
+extern ptr nashj_getraw()
+
+extern void development_fill(ptr, u32, u32)
+extern void development_debug(ptr)
+extern void development_exit(i32)
 
 void _start() {
-    pool = call arena_start(1024)
-    data = alloc i32
-    store data 312
+    pool = call nashj_start(1024)
+
+    nashj = ptr_to pool
+    mem = call nashj_alloc(nashj, 1024)
+
+    call development_fill(mem, 14, 456)
+    call development_debug(mem)
+    call nashj_dump(nashj, mem)
+    call nashj_destroy(nashj)
+    call development_exit(0)
 }

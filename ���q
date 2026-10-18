@@ -1,0 +1,25 @@
+.extern arena_start
+.extern arena_alloc
+.extern arena_dump
+.extern arena_destroy
+
+.globl _start
+.type _start, @function
+_start:
+	pushq %rbp
+	movq %rsp, %rbp
+	leaq -56(%rbp), %rdi
+	movq $128, %rsi
+	call arena_start
+	movq $8, %rsi
+	leaq -56(%rbp), %rdi
+	call arena_alloc
+	movq %rax, -64(%rbp)
+	movq -64(%rbp), %rsi
+	leaq -56(%rbp), %rdi
+	call arena_dump
+	leaq -56(%rbp), %rdi
+	call arena_destroy
+	leave
+	ret
+.size _start, .-_start

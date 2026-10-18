@@ -25,6 +25,7 @@ struct types {
         #define X(id) case id: return #id;
         switch(kind) { MTYPES }
         #undef X
+        return "UNKNOWN";
     }
 
     size_t alignment = 1;

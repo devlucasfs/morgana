@@ -1,14 +1,14 @@
 #pragma once
 
 #include "./lexer.hpp"
-#include "./hash.hpp"
 #include "./symbols.hpp"
-#include "codegen/handler.hpp"
+#include "./backends/factory.hpp"
+#include "./codegen/backends.hpp"
+#include "./codegen/asmgen.hpp"
 #include "parser/blocks.hpp"
 #include "parser/types.hpp"
 #include <string>
 #include <initializer_list>
-#include <variant>
 
 std::string assert(Lexer& lex, std::initializer_list<std::string> expected, std::string extra="") {
     auto tk = lex.next();
@@ -30,15 +30,23 @@ std::string assert(Lexer& lex, std::initializer_list<std::string> expected, std:
 }
 
 void parser(Lexer& lex, std::string output, std::string extensor) {
-    codegen asmgen(output, extensor);
+    target config {
+        .architecture = X86_64,
+        .convention = GNU,
+        .output = output,
+    };
+
+    auto backend = assembly_factory::create(config);
+    codegen asmgen(std::move(backend));
     symbols sym;
+
     size_t pos = 0;
     while( auto token = lex.next() ) {
         switch(hash(*token)) {
             case hash("extern"): {
                 auto ret = types::get_from(lex);
                 auto data = lex.next();
-                asmgen.extern_fn(*data);
+                asmgen.extern_fn(sym, *data);
                 assert(lex, {"("});
                 auto types = types::get_sequence(lex, ")");
                 sym.push(*data, subroutine(ret, types));
@@ -58,10 +66,10 @@ void parser(Lexer& lex, std::string output, std::string extensor) {
                 if( sub.args.size() != args.size() ) CompilerOutputs::fatal("Was expected " + std::to_string(sub.args.size()) + " arguments, but was received " + std::to_string(args.size()));
                 for( int i = args.size() - 1; i >= 0; i-- ) {
                     const auto& arg = args[i];
-                    asmgen.argument(sym, sub, arg, i);
+                    asmgen.argument(sym, sub, arg, i, false);
                 }
 
-                asmgen.call(*data);
+                asmgen.call(sym, *data);
                 continue;
             }
 
@@ -75,12 +83,11 @@ void parser(Lexer& lex, std::string output, std::string extensor) {
 
                 auto value = lex.next();
                 asmgen.store(sym, std::get<allocation>(alloc.value()), *value);
-                continue;
             }
 
             case hash("}"): {
                 sym.pop_scope();
-                asmgen.epilogue();
+                asmgen.epilogue(sym);
                 pos = 0;
                 continue;
             }
@@ -122,16 +129,21 @@ void parser(Lexer& lex, std::string output, std::string extensor) {
                             pos += sub.ret.size;
                             sym.push(*token, borrowed(sub.ret, pos));
 
+                            bool tuple = sub.ret.kind == types::mtuple;
+                            if( tuple ) {
+                                asmgen.sret(sym, pos);
+                            }
+
                             assert(lex, {"("});
                             auto args = get_block(lex, ")");
                             if( sub.args.size() != args.size() ) CompilerOutputs::fatal("Was expected " + std::to_string(sub.args.size()) + " arguments, but was received " + std::to_string(args.size()));
                             for( int i = args.size() - 1; i >= 0; i-- ) {
                                 const auto& arg = args[i];
-                                asmgen.argument(sym, sub, arg, i);
+                                asmgen.argument(sym, sub, arg, i, tuple);
                             }
 
-                            asmgen.call(*data);
-                            asmgen.collect_ret(pos);
+                            asmgen.call(sym, *data);
+                            asmgen.collect_ret(sym, pos);
                             continue;
                         }
 
@@ -147,7 +159,7 @@ void parser(Lexer& lex, std::string output, std::string extensor) {
                 sym.push(*data, subroutine(ret, types));
                 assert(lex, {"{"});
                 sym.push_scope();
-                asmgen.prologue(*data);
+                asmgen.prologue(sym, *data);
             }
         }
     }
