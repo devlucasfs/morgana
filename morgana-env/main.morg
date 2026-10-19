@@ -11,7 +11,8 @@ extern void development_exit(i32)
 void _start() {
     pool = call nashj_start(1024)
 
-    nashj = ptr_to pool
+    asokpdak = ptr_to pool
+    nashj = move asokpdak
     mem = call nashj_alloc(nashj, 1024)
 
     call development_fill(mem, 14, 456)

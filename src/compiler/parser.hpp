@@ -118,6 +118,14 @@ void parser(Lexer& lex, std::string output, std::string extensor) {
                             }
                         } continue;
 
+                        case hash("move"): {
+                            auto data = lex.next();
+                            auto value = sym.lookup(*data);
+                            if(! value.has_value() ) CompilerOutputs::fatal("Value " + *data + " not fond");
+                            auto val = value.value();
+                            sym.push(*token, val);
+                        } continue;
+
                         case hash("call"): {
                             auto data = lex.next();
                             auto fn = sym.lookup(*data);
