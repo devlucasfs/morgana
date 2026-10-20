@@ -53,9 +53,15 @@ inline auto lookup_or_fatal(symbols& sym, const std::string& name, const char* k
 
 inline subroutine lookup_subroutine(symbols& sym, const std::string& name) {
     auto value = lookup_or_fatal(sym, name, "Function");
-    if(! std::holds_alternative<subroutine>(value) )
-        CompilerOutputs::fatal("'" + name + "' is not a function");
-    return std::get<subroutine>(value);
+    if( std::holds_alternative<subroutine>(value) )
+        return std::get<subroutine>(value);
+
+    if( std::holds_alternative<unfold>(value) ) {
+        auto data = std::get<unfold>(value);
+        return subroutine(data.ret, data.args);
+    }
+
+    CompilerOutputs::fatal("'" + name + "' is not a function");
 }
 
 // "(" arg, arg, ... ")" # argument emissor
@@ -82,6 +88,16 @@ inline void parse_extern(Lexer& lex, symbols& sym, codegen& asmgen) {
     assert(lex, {"("});
     auto params = types::get_sequence(lex, ")");
     sym.push(name, subroutine(ret, params));
+}
+
+// unfold <type> <name>(<types>)
+inline void parse_unfold(Lexer& lex, symbols& sym, codegen& asmgen) {
+    auto ret  = types::get_from(lex);
+    auto name = next_token(lex, "function name");
+
+    assert(lex, {"("});
+    auto params = types::get_sequence(lex, ")");
+    sym.push(name, unfold(ret, params));
 }
 
 // call <fn>(<args>) # void functions
@@ -188,6 +204,24 @@ inline void parse_function(Lexer& lex, symbols& sym, codegen& asmgen) {
 
     assert(lex, {"("});
     auto params = types::get_sequence(lex, ")");
+
+    if( auto data = sym.lookup(name); data.has_value() ) {
+        if(! std::holds_alternative<unfold>(data.value()) )
+            CompilerOutputs::fatal(name + " is already defined.");
+
+        auto fwd = std::get<unfold>(data.value());
+        bool same = fwd.ret.kind == ret.kind
+                 && fwd.ret.size == ret.size
+                 && fwd.args.size() == params.size();
+        for( size_t i = 0; same && i < params.size(); i++ )
+            same = fwd.args[i].kind == params[i].kind && fwd.args[i].size == params[i].size;
+
+        if(! same )
+            CompilerOutputs::fatal("Definition of " + name + " does not match its unfold declaration.");
+
+        sym.erase(name);
+    }
+
     sym.push(name, subroutine(ret, params));
 
     assert(lex, {"{"});
@@ -209,6 +243,7 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
     while( auto token = lex.next() ) {
         switch( hash(*token) ) {
             case hash("extern"): parse_extern(lex, sym, asmgen);    continue;
+            case hash("unfold"): parse_unfold(lex, sym, asmgen);    continue;
             case hash("call"):   parse_call_void(lex, sym, asmgen); continue;
             case hash("store"):  parse_store(lex, sym, asmgen);     continue;
             case hash("ret"):    parse_ret(lex, sym, asmgen);       continue;

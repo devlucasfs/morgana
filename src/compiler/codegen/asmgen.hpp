@@ -6,12 +6,13 @@
 #include "backends.hpp"
 #include <cstddef>
 #include <cstdio>
-#include <iostream>
 #include <regex>
 #include <string>
 #include <utility>
 #include <variant>
 #include <memory>
+
+inline subroutine lookup_subroutine(symbols& sym, const std::string& name);
 
 struct codegen {
     size_t FUNC = 0;
@@ -104,8 +105,7 @@ struct codegen {
     }
 
     void collect_ret(symbols& sym, size_t p) {
-        auto fn = sym.lookup(last_call);
-        auto sub = std::get<subroutine>(fn.value());
+        auto sub = lookup_subroutine(sym, last_call);
         backend->collect_ret(sym, p, sub.ret.size, sub.ret.kind == types::mtuple);
     }
 

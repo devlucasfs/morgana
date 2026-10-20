@@ -16,6 +16,14 @@ struct subroutine {
         : ret(ret), args(args) {}
 };
 
+struct unfold {
+    types::type ret;
+    std::vector<types::type> args;
+
+    unfold(types::type ret, std::vector<types::type> args)
+        : ret(ret), args(args) {}
+};
+
 struct allocation {
     types::type allocated;
     size_t pos;
@@ -32,33 +40,39 @@ struct borrowed {
         : allocated(type), pos(pos) {}
 };
 
-using symbol = std::variant<std::monostate, subroutine, allocation, borrowed>;
+using symbol = std::variant<std::monostate, subroutine, allocation, borrowed, unfold>;
 
 struct symbols {
-    std::stack<std::map<std::string, symbol>> sym_tabs;
-    symbols() {
-        sym_tabs.push({});
-    }
+    std::vector<std::map<std::string, symbol>> sym_tabs;
 
-    void push_scope() { sym_tabs.push({}); }
+    symbols() { sym_tabs.emplace_back(); }
+
+    void push_scope() { sym_tabs.emplace_back(); }
+
     void pop_scope() {
-        if( sym_tabs.size() > 1 ) {
-            sym_tabs.pop();
-        }
+        if( sym_tabs.size() > 1 ) sym_tabs.pop_back();
     }
 
     void push(std::string id, symbol sym) {
-        sym_tabs.top().insert({id, sym});
+        sym_tabs.back().insert_or_assign(std::move(id), std::move(sym));
     }
 
-    std::optional<symbol> lookup(const std::string& id) {
-        auto tabs = sym_tabs;
-        while(!tabs.empty()) {
-            auto& tab = tabs.top();
-            auto it = tab.find(id);
-            if( it != tab.end() ) return it->second;
-            tabs.pop();
+    std::optional<symbol> lookup(const std::string& id) const {
+        for( auto tab = sym_tabs.rbegin(); tab != sym_tabs.rend(); ++tab ) {
+            auto it = tab->find(id);
+            if( it != tab->end() ) return it->second;
         }
         return std::nullopt;
+    }
+
+    bool erase(const std::string& id) {
+        for( auto tab = sym_tabs.rbegin(); tab != sym_tabs.rend(); ++tab ) {
+            if( tab->erase(id) > 0 ) return true;
+        }
+        return false;
+    }
+
+    bool erase_local(const std::string& id) {
+        return sym_tabs.back().erase(id) > 0;
     }
 };
