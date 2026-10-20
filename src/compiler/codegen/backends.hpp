@@ -48,6 +48,7 @@ public:
     virtual std::size_t alignment() = 0;
 
     virtual void extern_fn(symbols& sym, std::string& name) = 0;
+    virtual void alloca(std::size_t size) = 0;
     virtual void prologue(symbols& sym, std::string& name, std::size_t id) = 0;
     virtual void epilogue(symbols& sym, std::string& name, std::size_t id) = 0;
     virtual void argument(symbols& sym, bool lea, std::string& src, std::size_t index, bool sret) = 0;
@@ -56,4 +57,5 @@ public:
     virtual void load(symbols& sym, std::size_t pos) = 0;
     virtual void store(symbols& sym, std::size_t size, bool lea, std::string& src, std::size_t pos) = 0;
     virtual void sret(symbols& sym, std::size_t pos) = 0;
+    virtual void ret_int(symbols& sym, std::string& data, std::size_t id) = 0;
 };

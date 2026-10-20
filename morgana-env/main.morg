@@ -1,23 +1,35 @@
 extern { ptr, u64, u64, u64, ptr, ptr, ptr } nashj_start(u64)
 extern ptr nashj_alloc(ptr, u64)
+extern ptr nashj_getraw(ptr)
 extern void nashj_dump(ptr, ptr)
+extern i64 nashj_coalesce(ptr)
+extern void nashj_reset(ptr)
 extern void nashj_destroy(ptr)
-extern ptr nashj_getraw()
-
-extern void development_fill(ptr, u32, u32)
+extern void development_fill(ptr, i64, i64)
 extern void development_debug(ptr)
-extern void development_exit(i32)
+extern void development_exit(i64)
+
+i64 main() {
+td2b455155eac = call nashj_start(1024)
+allocator = move td2b455155eac
+tc13989230555 = ptr_to allocator
+t9780d52ab023 = call nashj_alloc(tc13989230555, 512)
+addr = move t9780d52ab023
+t323dd6ccc5e0 = load addr
+call development_fill(t323dd6ccc5e0, 14, 446)
+t5127f7183e61 = load addr
+call development_debug(t5127f7183e61)
+t826f268c64ad = ptr_to allocator
+t9bade336103d = load addr
+call nashj_dump(t826f268c64ad, t9bade336103d)
+t58b5d339261b = ptr_to allocator
+call nashj_destroy(t58b5d339261b)
+ret 0
+}
 
 void _start() {
-    pool = call nashj_start(1024)
-
-    asokpdak = ptr_to pool
-    nashj = move asokpdak
-    mem = call nashj_alloc(nashj, 1024)
-
-    call development_fill(mem, 14, 456)
-    call development_debug(mem)
-    call nashj_dump(nashj, mem)
-    call nashj_destroy(nashj)
-    call development_exit(0)
+t71bd57c02b73 = call main()
+code = move t71bd57c02b73
+t0bdf90658c58 = load code
+call development_exit(t0bdf90658c58)
 }

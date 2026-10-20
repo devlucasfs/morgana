@@ -16,13 +16,39 @@
 struct codegen {
     size_t FUNC = 0;
     std::string current_function, last_call;
-    std::streampos stack_position;
+
+    size_t pos = 0;
+    size_t reserved = 0;
 
     std::unique_ptr<assembly_backend> backend;
     codegen(std::unique_ptr<assembly_backend> b)
         : backend(std::move(b)) {}
 
     backend_void(extern_fn, (symbols& sym, std::string data) , sym, data);
+
+    static size_t align_up(size_t v, size_t a) {
+        return (v + a - 1) & ~(a - 1);
+    }
+
+    static size_t alignment_of(size_t size) {
+        if( size >= 16 ) return 16;
+        size_t a = 1;
+        while( a < size ) a <<= 1;
+        return a;
+    }
+
+    size_t alloca(std::size_t size) {
+        if( size == 0 ) return pos;
+
+        pos = align_up(pos + size, alignment_of(size));
+
+        if( pos > reserved ) {
+            size_t delta = align_up(pos - reserved, backend->alignment());
+            backend->alloca(delta);
+            reserved += delta;
+        }
+        return pos;
+    }
 
     std::pair<bool, std::string> _load_data(symbols& sym, std::string value, types::type type) {
         bool lea = false;
@@ -36,7 +62,7 @@ struct codegen {
         auto symbol = sym.lookup(value);
         if(! symbol.has_value() ) CompilerOutputs::fatal("Invalid data informed");
 
-        size_t pos;
+        size_t pos = 0;
         types::type t;
         if( std::holds_alternative<allocation>(symbol.value()) )
         {   auto a = std::get<allocation>(symbol.value());
@@ -63,11 +89,13 @@ struct codegen {
 
     void prologue(symbols& sym, std::string fn) {
         current_function = fn;
+        pos = reserved = 0;
         backend->prologue(sym, fn, FUNC);
     }
 
     void epilogue(symbols& sym) {
         backend->epilogue(sym, current_function, FUNC++);
+        pos = reserved = 0;
     }
 
     void call(symbols& sym, std::string data) {
@@ -75,18 +103,22 @@ struct codegen {
         backend->call(sym, data);
     }
 
-    void collect_ret(symbols& sym, size_t pos) {
+    void collect_ret(symbols& sym, size_t p) {
         auto fn = sym.lookup(last_call);
         auto sub = std::get<subroutine>(fn.value());
-        backend->collect_ret(sym, pos, sub.ret.size, sub.ret.kind == types::mtuple);
+        backend->collect_ret(sym, p, sub.ret.size, sub.ret.kind == types::mtuple);
     }
 
-    void sret(symbols& sym, size_t pos) {
-        backend->sret(sym, pos);
+    void sret(symbols& sym, size_t p) {
+        backend->sret(sym, p);
     }
 
     void store(symbols& sym, allocation alloc, std::string value) {
         auto [lea, src] = _load_data(sym, value, alloc.allocated);
         backend->store(sym, alloc.allocated.size, lea, src, alloc.pos);
+    }
+
+    void ret_int(symbols& sym, std::string& data) {
+        backend->ret_int(sym, data, FUNC);
     }
 };
