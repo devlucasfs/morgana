@@ -1,34 +1,13 @@
-extern { ptr, u64, u64, ptr, u64, ptr, ptr, ptr } nashj_start(u64)
-extern ptr nashj_alloc(ptr, u64)
-extern ptr nashj_getraw(ptr)
-extern void nashj_dump(ptr, ptr)
-extern i64 nashj_coalesce(ptr)
-extern void nashj_reset(ptr)
-extern void nashj_destroy(ptr)
-extern void development_fill(ptr, i64, i64)
-extern void development_debug(ptr)
+unfold i64 main(i32)
 extern void development_exit(i64)
-unfold i64 main()
 
 void _start() {
-tebcb0123d245 = call main()
-call development_exit(tebcb0123d245)
+t05d615051a81 = call main(14)
+call development_exit(t05d615051a81)
+}
 }
 
-i64 main() {
-te48ec0b1c461 = call nashj_start(1024)
-allocator = move te48ec0b1c461
-t22eeb5ec4bff = ptr_to allocator
-tec4bbe2f5447 = call nashj_alloc(t22eeb5ec4bff, 32)
-mem = move tec4bbe2f5447
-t9502c2681819 = load mem
-call development_fill(t9502c2681819, 0, 14)
-tad1c4af52e92 = load mem
-call development_debug(tad1c4af52e92)
-te02aadb000b0 = ptr_to allocator
-t1b4f74f97f62 = load mem
-call nashj_dump(te02aadb000b0, t1b4f74f97f62)
-tcb61f9d8638c = ptr_to allocator
-call nashj_destroy(tcb61f9d8638c)
-ret 0
+i64 main(i32) {
+@_ : test
+ret test
 }

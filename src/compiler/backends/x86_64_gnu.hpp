@@ -11,6 +11,7 @@ protected:
     static constexpr std::size_t arg_register_count = 6;
 
     std::size_t stack_args = 0;
+    std::size_t sret_slot = 0;
     std::size_t pending_cleanup = 0;
 
     static std::string generate_position(std::size_t pos) {
@@ -49,6 +50,28 @@ public:
     inline static constexpr const char* registers[arg_register_count] = {
         "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"
     };
+
+    static const char* param_register(std::size_t index, std::size_t size) {
+        static constexpr const char* table[arg_register_count][4] = {
+            { "%dil", "%di",  "%edi",  "%rdi" },
+            { "%sil", "%si",  "%esi",  "%rsi" },
+            { "%dl",  "%dx",  "%edx",  "%rdx" },
+            { "%cl",  "%cx",  "%ecx",  "%rcx" },
+            { "%r8b", "%r8w", "%r8d",  "%r8"  },
+            { "%r9b", "%r9w", "%r9d",  "%r9"  },
+        };
+
+        switch( size ) {
+            case 1: return table[index][0];
+            case 2: return table[index][1];
+            case 4: return table[index][2];
+            case 8: return table[index][3];
+            default:
+                throw std::runtime_error(
+                    "Unsupported operand size: " + std::to_string(size)
+                );
+        }
+    }
 
     std::size_t alignment() override { return 16; }
 
@@ -170,6 +193,55 @@ public:
     void sret(symbols& sym, std::size_t pos) override {
         writeln("leaq " + generate_position(pos) + ", %rdi");
     }
+
+    void save_sret(symbols& sym, std::size_t pos) override {
+        sret_slot = pos;
+        writeln("movq %rdi, " + generate_position(pos));
+    }
+
+    void ret_value(symbols& sym, std::size_t pos, std::size_t size, bool tuple, std::size_t id) override {
+        if( tuple ) {
+            if( sret_slot == 0 )
+                throw std::runtime_error("ret of a tuple in a function without an sret slot");
+
+            writeln("movq " + generate_position(sret_slot) + ", %rdi");
+            writeln("leaq " + generate_position(pos) + ", %rsi");
+            writeln("movq $" + std::to_string(size) + ", %rcx");
+            writeln("rep movsb");
+
+            writeln("movq " + generate_position(sret_slot) + ", %rax");
+        } else {
+            writeln(
+                std::string(move_instruction(size)) + " "
+                + generate_position(pos) + ", " + accumulator(size)
+            );
+        }
+
+        writeln("jmp .LFE" + std::to_string(id));
+    }
+
+    void param(symbols& sym, std::size_t index, std::size_t pos,
+                   std::size_t size, bool sret) override {
+            if( sret ) index++;
+
+            const std::string dst = generate_position(pos);
+
+            if( index < arg_register_count ) {
+                writeln(
+                    std::string(move_instruction(size)) + " "
+                    + param_register(index, size) + ", " + dst
+                );
+                return;
+            }
+
+            const std::size_t offset = 16 + 8 * (index - arg_register_count);
+
+            writeln("movq " + std::to_string(offset) + "(%rbp), %rax");
+            writeln(
+                std::string(move_instruction(size)) + " "
+                + accumulator(size) + ", " + dst
+            );
+        }
 
     void alloca(std::size_t size) override {
         size = align_stack(size);

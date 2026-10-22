@@ -58,4 +58,7 @@ public:
     virtual void store(symbols& sym, std::size_t size, bool lea, std::string& src, std::size_t pos) = 0;
     virtual void sret(symbols& sym, std::size_t pos) = 0;
     virtual void ret_int(symbols& sym, std::string& data, std::size_t id) = 0;
+    virtual void save_sret(symbols& sym, std::size_t pos) = 0;
+    virtual void ret_value(symbols& sym, std::size_t pos, std::size_t size, bool tuple, std::size_t id) = 0;
+    virtual void param(symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret) = 0;
 };

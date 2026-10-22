@@ -10,8 +10,17 @@
 #include <algorithm>
 #include <cctype>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <variant>
+#include <vector>
+
+using param_type = std::decay_t<decltype(std::declval<subroutine>().args[0])>;
+
+struct destroyer_arg {
+    std::string name;
+    param_type  type;
+};
 
 inline std::string assert(Lexer& lex, std::initializer_list<std::string> expected, std::string extra = "") {
     auto tk = lex.next();
@@ -123,14 +132,30 @@ inline void parse_store(Lexer& lex, symbols& sym, codegen& asmgen) {
     asmgen.store(sym, std::get<allocation>(value), next_token(lex, "value"));
 }
 
-// ret <integer>
+// ret <integer> | ret <name>
 inline void parse_ret(Lexer& lex, symbols& sym, codegen& asmgen) {
     auto data = next_token(lex, "return value");
 
-    if(! is_number(data) )
-        CompilerOutputs::fatal("ret only supports integer literals for now, received '" + data + "'");
+    if( is_number(data) ) {
+        asmgen.ret_int(sym, data);
+        return;
+    }
 
-    asmgen.ret_int(sym, data);
+    auto value = lookup_or_fatal(sym, data, "Value");
+
+    if( std::holds_alternative<borrowed>(value) ) {
+        auto b = std::get<borrowed>(value);
+        asmgen.ret_value(sym, b.pos, b.allocated.size, b.allocated.kind == types::mtuple);
+        return;
+    }
+
+    if( std::holds_alternative<allocation>(value) ) {
+        auto a = std::get<allocation>(value);
+        asmgen.ret_value(sym, a.pos, a.allocated.size, a.allocated.kind == types::mtuple);
+        return;
+    }
+
+    CompilerOutputs::fatal("'" + data + "' can't be returned");
 }
 
 // }
@@ -155,13 +180,26 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
             auto target = next_token(lex, "value name");
             auto val    = lookup_or_fatal(sym, target, "Value");
 
-            if(! std::holds_alternative<borrowed>(val) )
-                CompilerOutputs::fatal("ptr_to only works on values returned by a call: '" + target + "'");
+            types::type t;
+            size_t pos = 0;
 
-            auto borrow = std::get<borrowed>(val);
-            borrow.allocated.kind = types::mptr;
-            borrow.allocated.recalculate();
-            sym.push(name, allocation(borrow.allocated, borrow.pos));
+            if( std::holds_alternative<borrowed>(val) ) {
+                auto b = std::get<borrowed>(val);
+                t = b.allocated, pos = b.pos;
+            }
+            else if( std::holds_alternative<allocation>(val) ) {
+                auto a = std::get<allocation>(val);
+                t = a.allocated, pos = a.pos;
+            }
+            else {
+                CompilerOutputs::fatal(
+                    "ptr_to only works on allocations and values returned by a call: '" + target + "'"
+                );
+            }
+
+            t.kind = types::mptr;
+            t.recalculate();
+            sym.push(name, allocation(t, pos));
             return;
         }
 
@@ -197,7 +235,7 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
     }
 }
 
-inline void parse_function(Lexer& lex, symbols& sym, codegen& asmgen) {
+inline subroutine parse_function(Lexer& lex, symbols& sym, codegen& asmgen) {
     lex.back();
     auto ret  = types::get_from(lex);
     auto name = next_token(lex, "function name");
@@ -222,11 +260,66 @@ inline void parse_function(Lexer& lex, symbols& sym, codegen& asmgen) {
         sym.erase(name);
     }
 
-    sym.push(name, subroutine(ret, params));
+    subroutine sub(ret, params);
+    sym.push(name, sub);
 
     assert(lex, {"{"});
     sym.push_scope();
     asmgen.prologue(sym, name);
+    return sub;
+}
+
+// @_ : <arg>, <arg>, ...
+inline std::vector<destroyer_arg> parse_destroyer(Lexer& lex, symbols& sym, codegen& asmgen,
+                                                  const std::optional<subroutine>& current) {
+    if(! current )
+        CompilerOutputs::fatal("A destroyer '@_' must be declared inside a function.");
+
+    assert(lex, {":"}, "A destroyer needs its arguments: @_ : self, ...");
+
+    std::vector<destroyer_arg> args;
+
+    while( true ) {
+        auto name = next_token(lex, "argument name");
+
+        if( name == "," || name == ":" || name == "{" || name == "}" || name == "=" )
+            CompilerOutputs::fatal("Expected an argument name in the destroyer, but received '" + name + "'");
+
+        for( const auto& a : args )
+            if( a.name == name )
+                CompilerOutputs::fatal("Duplicated argument '" + name + "' in the destroyer");
+
+        if( args.size() >= current->args.size() )
+            CompilerOutputs::fatal(
+                "The destroyer has more arguments than the function, which takes "
+                + std::to_string(current->args.size())
+            );
+
+        args.push_back({ name, current->args[args.size()] });
+
+        auto sep = lex.peek();
+        if(! sep || *sep != "," ) break;
+        lex.next();
+    }
+
+    if( args.size() != current->args.size() )
+        CompilerOutputs::fatal(
+            "The destroyer needs " + std::to_string(current->args.size())
+            + " arguments (one per function parameter), but received " + std::to_string(args.size())
+        );
+
+    bool sret = current->ret.kind == types::mtuple;
+
+    for( size_t i = 0; i < args.size(); i++ ) {
+        if( sym.lookup(args[i].name).has_value() )
+            CompilerOutputs::fatal("'" + args[i].name + "' is already defined.");
+
+        size_t p = asmgen.alloca(args[i].type.size);
+        asmgen.param(sym, i, p, args[i].type.size, sret);
+        sym.push(args[i].name, borrowed(args[i].type, p));
+    }
+
+    return args;
 }
 
 inline void parser(Lexer& lex, std::string output, std::string extensor) {
@@ -237,6 +330,8 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
     };
 
     auto backend = assembly_factory::create(config);
+    std::optional<subroutine> current;
+    std::vector<destroyer_arg> destroyer_args;
     codegen asmgen(std::move(backend));
     symbols sym;
 
@@ -247,6 +342,7 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
             case hash("call"):   parse_call_void(lex, sym, asmgen); continue;
             case hash("store"):  parse_store(lex, sym, asmgen);     continue;
             case hash("ret"):    parse_ret(lex, sym, asmgen);       continue;
+            case hash("@_"):     destroyer_args = parse_destroyer(lex, sym, asmgen, current); continue;
             case hash("}"):      parse_close(sym, asmgen);          continue;
 
             default: {
@@ -257,7 +353,7 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
                     continue;
                 }
 
-                parse_function(lex, sym, asmgen);
+                current = parse_function(lex, sym, asmgen);
                 continue;
             }
         }

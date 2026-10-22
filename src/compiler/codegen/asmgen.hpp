@@ -26,6 +26,8 @@ struct codegen {
         : backend(std::move(b)) {}
 
     backend_void(extern_fn, (symbols& sym, std::string data) , sym, data);
+    backend_void(save_sret, (symbols& sym, std::size_t pos) , sym, pos);
+    backend_void(param, (symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret), sym, index, pos, size, sret);
 
     static size_t align_up(size_t v, size_t a) {
         return (v + a - 1) & ~(a - 1);
@@ -92,6 +94,11 @@ struct codegen {
         current_function = fn;
         pos = reserved = 0;
         backend->prologue(sym, fn, FUNC);
+
+        if( lookup_subroutine(sym, fn).ret.kind == types::mtuple ) {
+            size_t p = alloca(8);
+            save_sret(sym, p);
+        }
     }
 
     void epilogue(symbols& sym) {
@@ -120,5 +127,9 @@ struct codegen {
 
     void ret_int(symbols& sym, std::string& data) {
         backend->ret_int(sym, data, FUNC);
+    }
+
+    void ret_value(symbols& sym, std::size_t pos, std::size_t size, bool tuple) {
+        backend->ret_value(sym, pos, size, tuple, FUNC);
     }
 };
