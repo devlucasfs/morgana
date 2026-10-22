@@ -1,5 +1,12 @@
-
 #pragma once
+#include <string>
+
+struct syscall_arg {
+    bool        lea  = false;
+    bool        imm  = false;
+    std::string src;
+    std::size_t size = 8;
+};
 
 #include "../codegen/backends.hpp"
 #include "x86_64_gnu.hpp"
@@ -9,6 +16,7 @@
 
 #include <memory>
 #include <stdexcept>
+
 
 struct assembly_factory {
     static std::unique_ptr<assembly_backend> create(const target& config) {

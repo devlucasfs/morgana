@@ -73,6 +73,25 @@ inline subroutine lookup_subroutine(symbols& sym, const std::string& name) {
     CompilerOutputs::fatal("'" + name + "' is not a function");
 }
 
+inline std::string decode_literal(const std::string& token) {
+    if( token.empty() || token[0] != 'h' || (token.size() - 1) % 2 != 0 )
+        CompilerOutputs::fatal("Invalid string literal '" + token + "'");
+
+    auto hex = [&](char c) -> int {
+        if( c >= '0' && c <= '9' ) return c - '0';
+        if( c >= 'a' && c <= 'f' ) return c - 'a' + 10;
+        if( c >= 'A' && c <= 'F' ) return c - 'A' + 10;
+        CompilerOutputs::fatal("Invalid string literal '" + token + "'");
+        return 0;
+    };
+
+    std::string bytes;
+    for( size_t i = 1; i < token.size(); i += 2 )
+        bytes.push_back(static_cast<char>(hex(token[i]) * 16 + hex(token[i + 1])));
+
+    return bytes;
+}
+
 // "(" arg, arg, ... ")" # argument emissor
 inline void emit_arguments(Lexer& lex, symbols& sym, codegen& asmgen, subroutine& sub, bool sret) {
     assert(lex, {"("});
@@ -227,6 +246,79 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
 
             asmgen.call(sym, fn);
             asmgen.collect_ret(sym, p);
+            return;
+        }
+
+        case hash("deref"): {
+            auto type   = types::get_from(lex);
+            auto source = next_token(lex, "pointer name");
+            auto val    = lookup_or_fatal(sym, source, "Value");
+
+            if( type.size == 0 )
+                CompilerOutputs::fatal("deref can't read a zero-sized type");
+
+            types::type ptr_t;
+            size_t src_pos = 0;
+            bool via_lea   = false;
+
+            if( std::holds_alternative<borrowed>(val) ) {
+                auto b = std::get<borrowed>(val);
+                ptr_t = b.allocated, src_pos = b.pos, via_lea = false;
+            }
+            else if( std::holds_alternative<allocation>(val) ) {
+                auto a = std::get<allocation>(val);
+                ptr_t = a.allocated, src_pos = a.pos, via_lea = true;
+            }
+            else {
+                CompilerOutputs::fatal("deref needs a pointer value: '" + source + "'");
+            }
+
+            if( ptr_t.kind != types::mptr )
+                CompilerOutputs::fatal(
+                    "deref needs a pointer, but '" + source + "' is a " + ptr_t.kto_string()
+                );
+
+            size_t p = asmgen.alloca(type.size);
+            sym.push(name, borrowed(type, p));
+            asmgen.deref(sym, src_pos, via_lea, type.size, p);
+            return;
+        }
+
+        case hash("syscall"): {
+            auto number = next_token(lex, "syscall number");
+            if(! is_number(number) )
+                CompilerOutputs::fatal("Expected a syscall number, but received '" + number + "'");
+
+            std::vector<std::string> values;
+            while( true ) {
+                auto sep = lex.peek();
+                if(! sep || *sep != "," ) break;
+                lex.next();
+                values.push_back(next_token(lex, "syscall argument"));
+            }
+
+            if( values.size() > 6 )
+                CompilerOutputs::fatal("A syscall takes at most 6 arguments");
+
+
+            size_t p = asmgen.alloca(8);
+            // sym.push(name, borrowed(ret, p));
+
+            asmgen.syscall(sym, number, values, p);
+            return;
+        }
+
+        // <name> = str h<hex bytes>
+        case hash("str"): {
+            auto bytes = decode_literal(next_token(lex, "string literal"));
+
+            types::type ptr_t;
+            ptr_t.kind = types::mptr;
+            ptr_t.recalculate();
+
+            size_t p = asmgen.alloca(ptr_t.size);
+            sym.push(name, borrowed(ptr_t, p));
+            asmgen.string_ptr(sym, bytes, p);
             return;
         }
 

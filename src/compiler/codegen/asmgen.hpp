@@ -28,6 +28,8 @@ struct codegen {
     backend_void(extern_fn, (symbols& sym, std::string data) , sym, data);
     backend_void(save_sret, (symbols& sym, std::size_t pos) , sym, pos);
     backend_void(param, (symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret), sym, index, pos, size, sret);
+    backend_void(deref, (symbols& sym, std::size_t src_pos, bool via_lea, std::size_t size, std::size_t dst_pos), sym, src_pos, via_lea, size, dst_pos);
+    backend_void(string_ptr, (symbols& sym, const std::string& bytes, std::size_t pos), sym, bytes, pos);
 
     static size_t align_up(size_t v, size_t a) {
         return (v + a - 1) & ~(a - 1);
@@ -131,5 +133,44 @@ struct codegen {
 
     void ret_value(symbols& sym, std::size_t pos, std::size_t size, bool tuple) {
         backend->ret_value(sym, pos, size, tuple, FUNC);
+    }
+
+    void syscall(symbols& sym, const std::string& number,
+                 const std::vector<std::string>& values, size_t p) {
+        std::vector<syscall_arg> args;
+        std::regex num("\\d+");
+
+        for( const auto& v : values ) {
+            syscall_arg a;
+
+            if( std::regex_match(v, num) ) {
+                a.imm = true;
+                a.src = "$" + v;
+                args.push_back(a);
+                continue;
+            }
+
+            auto symbol = sym.lookup(v);
+            if(! symbol.has_value() ) CompilerOutputs::fatal("Value " + v + " not found");
+
+            if( std::holds_alternative<allocation>(symbol.value()) ) {
+                auto al = std::get<allocation>(symbol.value());
+                a.lea  = true;
+                a.size = al.allocated.size;
+                a.src  = "-" + std::to_string(al.pos) + "(%rbp)";
+            }
+            else if( std::holds_alternative<borrowed>(symbol.value()) ) {
+                auto b = std::get<borrowed>(symbol.value());
+                a.size = b.allocated.size;
+                a.src  = "-" + std::to_string(b.pos) + "(%rbp)";
+            }
+            else {
+                CompilerOutputs::fatal("'" + v + "' can't be used as a syscall argument");
+            }
+
+            args.push_back(a);
+        }
+
+        backend->syscall(sym, number, args, p);
     }
 };

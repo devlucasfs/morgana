@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../symbols.hpp"
+#include "../backends/factory.hpp"
 
 #include <cstddef>
 #include <fstream>
@@ -61,4 +62,11 @@ public:
     virtual void save_sret(symbols& sym, std::size_t pos) = 0;
     virtual void ret_value(symbols& sym, std::size_t pos, std::size_t size, bool tuple, std::size_t id) = 0;
     virtual void param(symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret) = 0;
+    virtual void deref(symbols& sym, std::size_t src_pos, bool via_lea, std::size_t size, std::size_t dst_pos) = 0;
+    virtual void string_ptr(symbols& sym, const std::string& bytes, std::size_t pos) = 0;
+
+    virtual void syscall(symbols& sym, const std::string& number,
+                         const std::vector<syscall_arg>& args, std::size_t pos) {
+        throw std::runtime_error("syscall not supported by this backend");
+    }
 };

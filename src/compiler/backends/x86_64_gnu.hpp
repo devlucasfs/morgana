@@ -1,15 +1,18 @@
 #pragma once
 
 #include "../codegen/backends.hpp"
+#include "factory.hpp"
 
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 class x86_64_gnu : public assembly_backend {
 protected:
     static constexpr std::size_t arg_register_count = 6;
 
+    std::unordered_map<std::string, std::string> strings;
     std::size_t stack_args = 0;
     std::size_t sret_slot = 0;
     std::size_t pending_cleanup = 0;
@@ -253,5 +256,85 @@ public:
     void ret_int(symbols& sym, std::string& data, std::size_t id) override {
         writeln("movq $" + data + ", %rax");
         writeln("jmp .LFE" + std::to_string(id));
+    }
+
+    void syscall(symbols& sym, const std::string& number, const std::vector<syscall_arg>& args, std::size_t pos) override {
+        // x86_64 Linux: rdi, rsi, rdx, r10, r8, r9 (r10 no lugar de rcx)
+        static constexpr const char* r64[6] = { "%rdi", "%rsi", "%rdx", "%r10", "%r8",  "%r9"  };
+        static constexpr const char* r32[6] = { "%edi", "%esi", "%edx", "%r10d", "%r8d", "%r9d" };
+
+        if( args.size() > 6 )
+            throw std::runtime_error("syscall takes at most 6 arguments");
+
+        for( std::size_t i = 0; i < args.size(); i++ ) {
+            const auto& a = args[i];
+
+            if( a.lea )      { writeln("leaq " + a.src + ", " + r64[i]); continue; }
+            if( a.imm )      { writeln("movq " + a.src + ", " + r64[i]); continue; }
+
+            switch( a.size ) {
+                case 8: writeln("movq "   + a.src + ", " + r64[i]); break;
+                case 4: writeln("movl "   + a.src + ", " + r32[i]); break;
+                case 2: writeln("movzwl " + a.src + ", " + r32[i]); break;
+                case 1: writeln("movzbl " + a.src + ", " + r32[i]); break;
+                default:
+                    throw std::runtime_error("Unsupported operand size: " + std::to_string(a.size));
+            }
+        }
+
+        writeln("movq $" + number + ", %rax");
+        writeln("syscall");
+        writeln("movq %rax, " + generate_position(pos));
+    }
+
+    void deref(symbols& sym, std::size_t src_pos, bool via_lea,
+               std::size_t size, std::size_t dst_pos) override {
+        writeln(std::string(via_lea ? "leaq " : "movq ") + generate_position(src_pos) + ", %rax");
+
+        if( size == 1 || size == 2 || size == 4 || size == 8 ) {
+            writeln(
+                std::string(move_instruction(size)) + " (%rax), " + accumulator(size)
+            );
+            writeln(
+                std::string(move_instruction(size)) + " " + accumulator(size)
+                + ", " + generate_position(dst_pos)
+            );
+            return;
+        }
+
+        writeln("movq %rax, %rsi");
+        writeln("leaq " + generate_position(dst_pos) + ", %rdi");
+        writeln("movq $" + std::to_string(size) + ", %rcx");
+        writeln("rep movsb");
+    }
+
+    void string_ptr(symbols& sym, const std::string& bytes, std::size_t pos) override {
+        auto it = strings.find(bytes);
+
+        if( it == strings.end() ) {
+            const std::string label = ".Lstr" + std::to_string(strings.size());
+            it = strings.emplace(bytes, label).first;
+
+            const bool mergeable = bytes.find('\0') == std::string::npos;
+            writeln(mergeable
+                ? ".pushsection .rodata.str1.1,\"aMS\",@progbits,1"
+                : ".pushsection .rodata");
+            writeln(label + ":");
+
+            for( std::size_t i = 0; i <= bytes.size(); i += 16 ) {
+                std::string line = ".byte ";
+                for( std::size_t j = i; j < i + 16 && j <= bytes.size(); j++ ) {
+                    unsigned v = j < bytes.size() ? static_cast<unsigned char>(bytes[j]) : 0;
+                    if( j != i ) line += ", ";
+                    line += std::to_string(v);
+                }
+                writeln(line);
+            }
+
+            writeln(".popsection");
+        }
+
+        writeln("leaq " + it->second + "(%rip), %rax");
+        writeln("movq %rax, " + generate_position(pos));
     }
 };
