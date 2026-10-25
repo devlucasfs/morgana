@@ -5,7 +5,9 @@
 
 #include <cstddef>
 #include <fstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #define backend_void(name, args, ...) \
     void name args { backend->name(__VA_ARGS__); }
@@ -49,7 +51,11 @@ public:
     virtual std::size_t alignment() = 0;
 
     virtual void extern_fn(symbols& sym, std::string& name) = 0;
+
+    // Reserves `size` more bytes in the current function frame. It does NOT emit code:
+    // the whole frame is reserved once, in the prologue (so jumps can never skip it).
     virtual void alloca(std::size_t size) = 0;
+
     virtual void prologue(symbols& sym, std::string& name, std::size_t id) = 0;
     virtual void epilogue(symbols& sym, std::string& name, std::size_t id) = 0;
     virtual void argument(symbols& sym, bool lea, std::string& src, std::size_t index, bool sret) = 0;
@@ -64,6 +70,14 @@ public:
     virtual void param(symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret) = 0;
     virtual void deref(symbols& sym, std::size_t src_pos, bool via_lea, std::size_t size, std::size_t dst_pos) = 0;
     virtual void string_ptr(symbols& sym, const std::string& bytes, std::size_t pos) = 0;
+
+    virtual void label(const std::string& name) = 0;
+    virtual void jump(const std::string& name) = 0;
+    virtual void branch(std::size_t pos, std::size_t size, bool nonzero, const std::string& name) = 0;
+    virtual void binary(symbols& sym, const std::string& op, std::size_t size,
+                        bool a_imm, const std::string& a,
+                        bool b_imm, const std::string& b,
+                        std::size_t dst_pos, std::size_t dst_size) = 0;
 
     virtual void syscall(symbols& sym, const std::string& number,
                          const std::vector<syscall_arg>& args, std::size_t pos) {

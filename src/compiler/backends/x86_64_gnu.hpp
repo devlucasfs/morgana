@@ -4,6 +4,8 @@
 #include "factory.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -16,9 +18,14 @@ protected:
     std::size_t stack_args = 0;
     std::size_t sret_slot = 0;
     std::size_t pending_cleanup = 0;
+    std::size_t frame = 0;
 
     static std::string generate_position(std::size_t pos) {
         return "-" + std::to_string(pos) + "(%rbp)";
+    }
+
+    static std::string block_label(const std::string& name) {
+        return ".Lb_" + name;
     }
 
     static const char* accumulator(std::size_t size) {
@@ -44,6 +51,54 @@ protected:
                 throw std::runtime_error(
                     "Unsupported operand size: " + std::to_string(size)
                 );
+        }
+    }
+
+    static bool is_signed_op(const std::string& op) {
+        return op == "sdiv" || op == "srem"
+            || op == "slt" || op == "sle" || op == "sgt" || op == "sge";
+    }
+
+    static long long immediate_value(const std::string& src, std::size_t size, bool sign) {
+        const std::string digits = src.substr(1);   // drop '$'
+        long long v = (!digits.empty() && digits[0] == '-')
+            ? std::strtoll(digits.c_str(), nullptr, 10)
+            : static_cast<long long>(std::strtoull(digits.c_str(), nullptr, 10));
+
+        switch( size ) {
+            case 1: return sign ? static_cast<long long>(static_cast<std::int8_t>(v))
+                                : static_cast<long long>(static_cast<std::uint8_t>(v));
+            case 2: return sign ? static_cast<long long>(static_cast<std::int16_t>(v))
+                                : static_cast<long long>(static_cast<std::uint16_t>(v));
+            case 4: return sign ? static_cast<long long>(static_cast<std::int32_t>(v))
+                                : static_cast<long long>(static_cast<std::uint32_t>(v));
+            default: return v;
+        }
+    }
+
+    /// Loads an operand into a 64-bit register, sign- or zero-extending it.
+    void load_operand(bool imm, const std::string& src, std::size_t size, bool sign,
+                      const char* r64, const char* r32) {
+        if( imm ) {
+            const long long v = immediate_value(src, size, sign);
+
+            if( v >= INT32_MIN && v <= INT32_MAX )
+                writeln("movq $" + std::to_string(v) + ", " + r64);
+            else
+                writeln("movabsq $" + std::to_string(v) + ", " + r64);
+            return;
+        }
+
+        switch( size ) {
+            case 1: writeln(std::string(sign ? "movsbq " : "movzbq ") + src + ", " + r64); break;
+            case 2: writeln(std::string(sign ? "movswq " : "movzwq ") + src + ", " + r64); break;
+            case 4:
+                if( sign ) writeln("movslq " + src + ", " + r64);
+                else       writeln("movl "   + src + ", " + r32);
+                break;
+            case 8: writeln("movq " + src + ", " + r64); break;
+            default:
+                throw std::runtime_error("Unsupported operand size: " + std::to_string(size));
         }
     }
 
@@ -89,6 +144,7 @@ public:
 
     void prologue(symbols& sym, std::string& name, std::size_t id) override {
         stack_args = pending_cleanup = 0;
+        frame = 0;
 
         emptylines(1);
         writeln(".globl " + name);
@@ -102,14 +158,20 @@ public:
             writeln("xorl %ebp, %ebp");
             writeln("andq $-16, %rsp");
             writeln("movq %rsp, %rbp");
-            return;
+        } else {
+            writeln("pushq %rbp");
+            writeln("movq %rsp, %rbp");
         }
 
-        writeln("pushq %rbp");
-        writeln("movq %rsp, %rbp");
+        // The whole frame is reserved here, once. Its size is only known when the function
+        // ends, so it is a symbol defined by `.set` in the epilogue.
+        writeln("subq $.LFRAME" + std::to_string(id) + ", %rsp");
     }
 
     void epilogue(symbols& sym, std::string& name, std::size_t id) override {
+        set_tabs(1);
+        writeln(".set .LFRAME" + std::to_string(id) + ", " + std::to_string(frame));
+
         set_tabs(0);
         writeln(".LFE" + std::to_string(id) + ":");
         set_tabs(1);
@@ -246,11 +308,9 @@ public:
             );
         }
 
+    // Only accounts for the bytes: the prologue reserves the whole frame at once.
     void alloca(std::size_t size) override {
-        size = align_stack(size);
-        if( size == 0 ) return;
-
-        writeln("subq $" + std::to_string(size) + ", %rsp");
+        frame += align_stack(size);
     }
 
     void ret_int(symbols& sym, std::string& data, std::size_t id) override {
@@ -259,7 +319,6 @@ public:
     }
 
     void syscall(symbols& sym, const std::string& number, const std::vector<syscall_arg>& args, std::size_t pos) override {
-        // x86_64 Linux: rdi, rsi, rdx, r10, r8, r9 (r10 no lugar de rcx)
         static constexpr const char* r64[6] = { "%rdi", "%rsi", "%rdx", "%r10", "%r8",  "%r9"  };
         static constexpr const char* r32[6] = { "%edi", "%esi", "%edx", "%r10d", "%r8d", "%r9d" };
 
@@ -336,5 +395,74 @@ public:
 
         writeln("leaq " + it->second + "(%rip), %rax");
         writeln("movq %rax, " + generate_position(pos));
+    }
+
+    // ───────────── control flow / arithmetic ─────────────
+
+    void label(const std::string& name) override {
+        set_tabs(0);
+        writeln(block_label(name) + ":");
+        set_tabs(1);
+    }
+
+    void jump(const std::string& name) override {
+        writeln("jmp " + block_label(name));
+    }
+
+    void branch(std::size_t pos, std::size_t size, bool nonzero, const std::string& name) override {
+        const char* acc = accumulator(size);
+
+        writeln(std::string(move_instruction(size)) + " " + generate_position(pos) + ", " + acc);
+        writeln(std::string("test ") + acc + ", " + acc);
+        writeln(std::string(nonzero ? "jnz " : "jz ") + block_label(name));
+    }
+
+    void binary(symbols& sym, const std::string& op, std::size_t size,
+                bool a_imm, const std::string& a,
+                bool b_imm, const std::string& b,
+                std::size_t dst_pos, std::size_t dst_size) override {
+        const bool sign = is_signed_op(op);
+
+        load_operand(a_imm, a, size, sign, "%rax", "%eax");
+        load_operand(b_imm, b, size, sign, "%rcx", "%ecx");
+
+        if( op == "add" )       writeln("addq %rcx, %rax");
+        else if( op == "sub" )  writeln("subq %rcx, %rax");
+        else if( op == "mul" )  writeln("imulq %rcx, %rax");
+        else if( op == "and" )  writeln("andq %rcx, %rax");
+        else if( op == "or" )   writeln("orq %rcx, %rax");
+        else if( op == "sdiv" || op == "srem" ) {
+            writeln("cqto");
+            writeln("idivq %rcx");
+            if( op == "srem" ) writeln("movq %rdx, %rax");
+        }
+        else if( op == "udiv" || op == "urem" ) {
+            writeln("xorl %edx, %edx");
+            writeln("divq %rcx");
+            if( op == "urem" ) writeln("movq %rdx, %rax");
+        }
+        else {
+            const char* set = nullptr;
+
+            if( op == "eq" )       set = "sete";
+            else if( op == "ne" )  set = "setne";
+            else if( op == "slt" ) set = "setl";
+            else if( op == "sle" ) set = "setle";
+            else if( op == "sgt" ) set = "setg";
+            else if( op == "sge" ) set = "setge";
+            else if( op == "ult" ) set = "setb";
+            else if( op == "ule" ) set = "setbe";
+            else if( op == "ugt" ) set = "seta";
+            else if( op == "uge" ) set = "setae";
+            else throw std::runtime_error("Unknown binary operation '" + op + "'");
+
+            writeln("cmpq %rcx, %rax");
+            writeln(std::string(set) + " %al");
+        }
+
+        writeln(
+            std::string(move_instruction(dst_size)) + " "
+            + accumulator(dst_size) + ", " + generate_position(dst_pos)
+        );
     }
 };

@@ -12,6 +12,7 @@
 #include <initializer_list>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -50,8 +51,13 @@ inline std::string next_token(Lexer& lex, const char* expected) {
     return *tk;
 }
 
+// `123` or `-123`
 inline bool is_number(const std::string& s) {
-    return !s.empty() && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isdigit(c); });
+    return is_integer_literal(s);
+}
+
+inline bool is_zero_literal(const std::string& s) {
+    return s.find_first_not_of("-0") == std::string::npos;
 }
 
 inline auto lookup_or_fatal(symbols& sym, const std::string& name, const char* kind) {
@@ -90,6 +96,106 @@ inline std::string decode_literal(const std::string& token) {
         bytes.push_back(static_cast<char>(hex(token[i]) * 16 + hex(token[i + 1])));
 
     return bytes;
+}
+
+// ───────────── binary operations ─────────────
+
+// <name> = <op> <a>, <b>
+inline bool is_binary_op(const std::string& op) {
+    static const std::unordered_set<std::string> ops = {
+        "add", "sub", "mul", "sdiv", "udiv", "srem", "urem", "and", "or",
+        "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
+    };
+    return ops.count(op) > 0;
+}
+
+// comparisons produce a 1-byte boolean
+inline bool is_comparison_op(const std::string& op) {
+    static const std::unordered_set<std::string> ops = {
+        "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
+    };
+    return ops.count(op) > 0;
+}
+
+// <name> = <op> <a>, <b>   (a and b: names or integer literals, at least one must be a name)
+inline void parse_binary(const std::string& name, const std::string& op,
+                         Lexer& lex, symbols& sym, codegen& asmgen) {
+    auto a = next_token(lex, "left operand");
+    assert(lex, {","}, "A binary operation needs two operands: <name> = " + op + " a, b");
+    auto b = next_token(lex, "right operand");
+
+    auto ta = asmgen.operand_type(sym, a);
+    auto tb = asmgen.operand_type(sym, b);
+
+    if(! ta && !tb )
+        CompilerOutputs::fatal("'" + op + "' needs at least one named operand");
+
+    types::type operand = ta ? *ta : *tb;
+
+    if( operand.kind == types::mtuple )
+        CompilerOutputs::fatal("'" + op + "' can't operate on a tuple");
+
+    if( ta && tb && ta->size != tb->size )
+        CompilerOutputs::fatal("The operands of '" + op + "' must have the same size");
+
+    // the result has the type of the operands (a comparison keeps the kind, but is 1 byte)
+    types::type result = operand;
+    if( is_comparison_op(op) ) result.size = 1;
+
+    size_t p = asmgen.alloca(result.size);
+    sym.push(name, borrowed(result, p));
+    asmgen.binary(sym, op, operand.size, a, b, p, result.size);
+}
+
+// ───────────── control flow ─────────────
+
+// ::name::   (the lexer reads it as a single token)
+inline bool is_label_token(const std::string& t) {
+    return t.size() > 4 && t.compare(0, 2, "::") == 0 && t.compare(t.size() - 2, 2, "::") == 0;
+}
+
+inline void parse_label(const std::string& token, symbols& sym, codegen& asmgen) {
+    asmgen.label(sym, token.substr(2, token.size() - 4));
+}
+
+// br <label>
+inline void parse_br(Lexer& lex, symbols& sym, codegen& asmgen) {
+    asmgen.jump(sym, next_token(lex, "label name"));
+}
+
+// brez <cond>, <label>   |   brnz <cond>, <label>
+inline void parse_branch(Lexer& lex, symbols& sym, codegen& asmgen, bool nonzero) {
+    auto cond = next_token(lex, "condition value");
+    assert(lex, {","}, "A branch needs a label: brez cond, label");
+    auto target = next_token(lex, "label name");
+
+    if( is_number(cond) ) {
+        bool taken = nonzero ? !is_zero_literal(cond) : is_zero_literal(cond);
+        if( taken ) asmgen.jump(sym, target);
+        return;
+    }
+
+    auto value = lookup_or_fatal(sym, cond, "Value");
+
+    types::type t;
+    size_t pos = 0;
+
+    if( std::holds_alternative<borrowed>(value) ) {
+        auto b = std::get<borrowed>(value);
+        t = b.allocated, pos = b.pos;
+    }
+    else if( std::holds_alternative<allocation>(value) ) {
+        auto a = std::get<allocation>(value);
+        t = a.allocated, pos = a.pos;
+    }
+    else {
+        CompilerOutputs::fatal("'" + cond + "' can't be used as a branch condition");
+    }
+
+    if( t.kind == types::mtuple )
+        CompilerOutputs::fatal("A branch condition can't be a tuple: '" + cond + "'");
+
+    asmgen.branch(sym, pos, t.size, nonzero, target);
 }
 
 // "(" arg, arg, ... ")" # argument emissor
@@ -187,6 +293,11 @@ inline void parse_close(symbols& sym, codegen& asmgen) {
 inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, codegen& asmgen) {
     auto statement = next_token(lex, "statement");
 
+    if( is_binary_op(statement) ) {
+        parse_binary(name, statement, lex, sym, asmgen);
+        return;
+    }
+
     switch( hash(statement) ) {
         case hash("alloc"): {
             auto type = types::get_from(lex);
@@ -222,10 +333,32 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
             return;
         }
 
-        case hash("move"):
-        case hash("load"): {
+        // `move` preserves the symbol category; it only introduces another name.
+        case hash("move"): {
             auto source = next_token(lex, "value name");
             sym.push(name, lookup_or_fatal(sym, source, "Value"));
+            return;
+        }
+
+        // `load` treats an allocation as the value stored in that stack slot,
+        // rather than as the address of the slot. No copy is needed because
+        // `borrowed` represents a value already stored at that position.
+        case hash("load"): {
+            auto source = next_token(lex, "value name");
+            auto value  = lookup_or_fatal(sym, source, "Value");
+
+            if( std::holds_alternative<borrowed>(value) ) {
+                sym.push(name, std::get<borrowed>(value));
+                return;
+            }
+
+            if( std::holds_alternative<allocation>(value) ) {
+                auto a = std::get<allocation>(value);
+                sym.push(name, borrowed(a.allocated, a.pos));
+                return;
+            }
+
+            CompilerOutputs::fatal("'" + source + "' can't be loaded as a value");
             return;
         }
 
@@ -434,10 +567,18 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
             case hash("call"):   parse_call_void(lex, sym, asmgen); continue;
             case hash("store"):  parse_store(lex, sym, asmgen);     continue;
             case hash("ret"):    parse_ret(lex, sym, asmgen);       continue;
+            case hash("br"):     parse_br(lex, sym, asmgen);        continue;
+            case hash("brez"):   parse_branch(lex, sym, asmgen, false); continue;
+            case hash("brnz"):   parse_branch(lex, sym, asmgen, true);  continue;
             case hash("@_"):     destroyer_args = parse_destroyer(lex, sym, asmgen, current); continue;
             case hash("}"):      parse_close(sym, asmgen);          continue;
 
             default: {
+                if( is_label_token(*token) ) {
+                    parse_label(*token, sym, asmgen);
+                    continue;
+                }
+
                 auto sign = lex.peek();
                 if( sign && *sign == "=" ) {
                     lex.next();

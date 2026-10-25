@@ -4,15 +4,24 @@
 #include "../symbols.hpp"
 #include "./backends.hpp"
 #include "backends.hpp"
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdio>
-#include <regex>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
-#include <memory>
+#include <vector>
 
 inline subroutine lookup_subroutine(symbols& sym, const std::string& name);
+
+/// `123` or `-123`
+inline bool is_integer_literal(const std::string& s) {
+    size_t i = (!s.empty() && s[0] == '-') ? 1 : 0;
+    return i < s.size() && std::all_of(s.begin() + i, s.end(), [](unsigned char c) { return std::isdigit(c); });
+}
 
 struct codegen {
     size_t FUNC = 0;
@@ -42,6 +51,8 @@ struct codegen {
         return a;
     }
 
+    // Returns the stack offset of a new slot. The backend only accounts for the bytes:
+    // the frame is reserved once, in the function prologue.
     size_t alloca(std::size_t size) {
         if( size == 0 ) return pos;
 
@@ -59,8 +70,7 @@ struct codegen {
         bool lea = false;
         std::string src = "unknown";
 
-        std::regex number("\\d*");
-        if( std::regex_match(value, number) ) {
+        if( is_integer_literal(value) ) {
             return { lea, "$" + value };
         }
 
@@ -138,12 +148,11 @@ struct codegen {
     void syscall(symbols& sym, const std::string& number,
                  const std::vector<std::string>& values, size_t p) {
         std::vector<syscall_arg> args;
-        std::regex num("\\d+");
 
         for( const auto& v : values ) {
             syscall_arg a;
 
-            if( std::regex_match(v, num) ) {
+            if( is_integer_literal(v) ) {
                 a.imm = true;
                 a.src = "$" + v;
                 args.push_back(a);
@@ -172,5 +181,63 @@ struct codegen {
         }
 
         backend->syscall(sym, number, args, p);
+    }
+
+    // ───────────── control flow / arithmetic ─────────────
+
+    void label(symbols& sym, const std::string& name) {
+        backend->label(name);
+    }
+
+    void jump(symbols& sym, const std::string& name) {
+        backend->jump(name);
+    }
+
+    void branch(symbols& sym, size_t p, size_t size, bool nonzero, const std::string& name) {
+        backend->branch(p, size, nonzero, name);
+    }
+
+    /// Type of an operand, or nullopt when it is an integer literal.
+    std::optional<types::type> operand_type(symbols& sym, const std::string& value) {
+        if( is_integer_literal(value) ) return std::nullopt;
+
+        auto symbol = sym.lookup(value);
+        if(! symbol.has_value() ) CompilerOutputs::fatal("Value " + value + " not found");
+
+        if( std::holds_alternative<allocation>(symbol.value()) )
+            return std::get<allocation>(symbol.value()).allocated;
+
+        if( std::holds_alternative<borrowed>(symbol.value()) )
+            return std::get<borrowed>(symbol.value()).allocated;
+
+        CompilerOutputs::fatal("'" + value + "' can't be used as an operand");
+        return std::nullopt;
+    }
+
+    /// `dst = op a, b` — `a`/`b` are names or integer literals
+    void binary(symbols& sym, const std::string& op, size_t size,
+                const std::string& a, const std::string& b,
+                size_t dst, size_t dst_size) {
+        auto operand = [&](const std::string& v) -> std::pair<bool, std::string> {
+            if( is_integer_literal(v) ) return { true, "$" + v };
+
+            auto symbol = sym.lookup(v);
+            if(! symbol.has_value() ) CompilerOutputs::fatal("Value " + v + " not found");
+
+            size_t p = 0;
+            if( std::holds_alternative<allocation>(symbol.value()) )
+                p = std::get<allocation>(symbol.value()).pos;
+            else if( std::holds_alternative<borrowed>(symbol.value()) )
+                p = std::get<borrowed>(symbol.value()).pos;
+            else
+                CompilerOutputs::fatal("'" + v + "' can't be used as an operand");
+
+            return { false, "-" + std::to_string(p) + "(%rbp)" };
+        };
+
+        auto [a_imm, a_src] = operand(a);
+        auto [b_imm, b_src] = operand(b);
+
+        backend->binary(sym, op, size, a_imm, a_src, b_imm, b_src, dst, dst_size);
     }
 };
