@@ -283,6 +283,116 @@ inline void parse_ret(Lexer& lex, symbols& sym, codegen& asmgen) {
     CompilerOutputs::fatal("'" + data + "' can't be returned");
 }
 
+// storep <type> <ptr>, <value>     (*ptr = value, `type` is how wide the write is)
+inline void parse_storep(Lexer& lex, symbols& sym, codegen& asmgen) {
+    auto type   = types::get_from(lex);
+    auto target = next_token(lex, "pointer name");
+    assert(lex, {","}, "storep needs a value: storep type ptr, value");
+    auto value  = next_token(lex, "value");
+
+    if( type.kind == types::mtuple || type.size == 0 )
+        CompilerOutputs::fatal("storep only writes scalar values");
+
+    auto val = lookup_or_fatal(sym, target, "Value");
+
+    types::type ptr_t;
+    size_t pos   = 0;
+    bool via_lea = false;
+
+    if( std::holds_alternative<borrowed>(val) ) {
+        auto b = std::get<borrowed>(val);
+        ptr_t = b.allocated, pos = b.pos, via_lea = false;
+    }
+    else if( std::holds_alternative<allocation>(val) ) {
+        auto a = std::get<allocation>(val);
+        ptr_t = a.allocated, pos = a.pos, via_lea = true;
+    }
+    else {
+        CompilerOutputs::fatal("storep needs a pointer value: '" + target + "'");
+    }
+
+    if( ptr_t.kind != types::mptr )
+        CompilerOutputs::fatal(
+            "storep needs a pointer, but '" + target + "' is a " + ptr_t.kto_string()
+        );
+
+    asmgen.store_ptr(sym, pos, via_lea, type, value);
+}
+
+// <name> = pack <tuple type> <a>, <b>, ...
+// Each element is copied into its place inside a new tuple slot. Elements must be names
+// (a constant goes through alloc + store first). Layout: natural alignment, in order.
+inline void parse_pack(const std::string& name, Lexer& lex, symbols& sym, codegen& asmgen) {
+    auto type = types::get_from(lex);
+
+    if( type.kind != types::mtuple )
+        CompilerOutputs::fatal("pack needs a tuple type, but received a " + type.kto_string());
+
+    struct field { size_t pos, size, offset; };
+    std::vector<field> fields;
+
+    size_t offset = 0, max_align = 1;
+
+    while( true ) {
+        auto value = next_token(lex, "tuple element");
+
+        if( is_number(value) )
+            CompilerOutputs::fatal("pack can't take the literal " + value + ": use alloc + store first");
+
+        auto val = lookup_or_fatal(sym, value, "Value");
+
+        types::type t;
+        size_t pos = 0;
+
+        if( std::holds_alternative<borrowed>(val) ) {
+            auto b = std::get<borrowed>(val);
+            t = b.allocated, pos = b.pos;
+        }
+        else if( std::holds_alternative<allocation>(val) ) {
+            auto a = std::get<allocation>(val);
+            t = a.allocated, pos = a.pos;
+        }
+        else {
+            CompilerOutputs::fatal("'" + value + "' can't be used as a tuple element");
+        }
+
+        if( t.size == 0 )
+            CompilerOutputs::fatal("pack can't take a zero-sized element: '" + value + "'");
+
+        bool scalar = t.size == 1 || t.size == 2 || t.size == 4 || t.size == 8;
+
+        if( t.kind != types::mtuple && !scalar )
+            CompilerOutputs::fatal("Unsupported tuple element size: " + std::to_string(t.size));
+
+        // a nested tuple's real alignment isn't known here: assumes its size, capped at 8
+        size_t align = scalar ? t.size : std::min<size_t>(8, codegen::alignment_of(t.size));
+
+        offset = codegen::align_up(offset, align);
+        fields.push_back({ pos, t.size, offset });
+        offset += t.size;
+        max_align = std::max(max_align, align);
+
+        auto sep = lex.peek();
+        if(! sep || *sep != "," ) break;
+        lex.next();
+    }
+
+    // accepts the layout with or without trailing padding; anything else means the
+    // elements don't match the declared tuple type
+    size_t padded = codegen::align_up(offset, max_align);
+    if( type.size != offset && type.size != padded )
+        CompilerOutputs::fatal(
+            "The elements of pack take " + std::to_string(offset) + " bytes, but the tuple type takes "
+            + std::to_string(type.size)
+        );
+
+    size_t p = asmgen.alloca(type.size);
+    sym.push(name, borrowed(type, p));
+
+    for( const auto& f : fields )
+        asmgen.copy_slot(sym, f.pos, f.size, p - f.offset);
+}
+
 // }
 inline void parse_close(symbols& sym, codegen& asmgen) {
     sym.pop_scope();
@@ -337,6 +447,12 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
         case hash("move"): {
             auto source = next_token(lex, "value name");
             sym.push(name, lookup_or_fatal(sym, source, "Value"));
+            return;
+        }
+
+        // <name> = pack <tuple type> <a>, <b>, ...
+        case hash("pack"): {
+            parse_pack(name, lex, sym, asmgen);
             return;
         }
 
@@ -455,6 +571,39 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
             return;
         }
 
+        // <name> = cast <type> <value>   (integer <-> integer, ptr <-> ptr, ptr <-> 64-bit)
+        case hash("cast"): {
+            auto type   = types::get_from(lex);
+            auto source = next_token(lex, "value name");
+            auto val    = lookup_or_fatal(sym, source, "Value");
+
+            types::type from;
+            size_t src_pos = 0;
+
+            if( std::holds_alternative<borrowed>(val) ) {
+                auto b = std::get<borrowed>(val);
+                from = b.allocated, src_pos = b.pos;
+            }
+            else if( std::holds_alternative<allocation>(val) ) {
+                auto a = std::get<allocation>(val);
+                from = a.allocated, src_pos = a.pos;
+            }
+            else {
+                CompilerOutputs::fatal("cast needs a value: '" + source + "'");
+            }
+
+            if( from.kind == types::mtuple || type.kind == types::mtuple || type.size == 0 )
+                CompilerOutputs::fatal("cast only converts scalar values");
+
+            // signed source -> sign extension; unsigned source and pointers -> zero extension
+            bool src_signed = from.kto_string().rfind("mi", 0) == 0;
+
+            size_t p = asmgen.alloca(type.size);
+            sym.push(name, borrowed(type, p));
+            asmgen.cast(sym, src_pos, from.size, src_signed, p, type.size);
+            return;
+        }
+
         default:
             CompilerOutputs::fatal("Unknown statement '" + statement + "' after '='");
     }
@@ -566,6 +715,7 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
             case hash("unfold"): parse_unfold(lex, sym, asmgen);    continue;
             case hash("call"):   parse_call_void(lex, sym, asmgen); continue;
             case hash("store"):  parse_store(lex, sym, asmgen);     continue;
+            case hash("storep"): parse_storep(lex, sym, asmgen);    continue;
             case hash("ret"):    parse_ret(lex, sym, asmgen);       continue;
             case hash("br"):     parse_br(lex, sym, asmgen);        continue;
             case hash("brez"):   parse_branch(lex, sym, asmgen, false); continue;

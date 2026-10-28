@@ -63,6 +63,8 @@ public:
     virtual void collect_ret(symbols& sym, std::size_t pos, std::size_t size, bool sret) = 0;
     virtual void load(symbols& sym, std::size_t pos) = 0;
     virtual void store(symbols& sym, std::size_t size, bool lea, std::string& src, std::size_t pos) = 0;
+    virtual void store_ptr(symbols& sym, std::size_t size, std::size_t ptr_pos, bool ptr_lea,
+                           bool lea, std::string& src) = 0;
     virtual void sret(symbols& sym, std::size_t pos) = 0;
     virtual void ret_int(symbols& sym, std::string& data, std::size_t id) = 0;
     virtual void save_sret(symbols& sym, std::size_t pos) = 0;
@@ -70,6 +72,9 @@ public:
     virtual void param(symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret) = 0;
     virtual void deref(symbols& sym, std::size_t src_pos, bool via_lea, std::size_t size, std::size_t dst_pos) = 0;
     virtual void string_ptr(symbols& sym, const std::string& bytes, std::size_t pos) = 0;
+    virtual void cast(symbols& sym, std::size_t src_pos, std::size_t src_size, bool src_signed,
+                      std::size_t dst_pos, std::size_t dst_size) = 0;
+    virtual void copy_bytes(symbols& sym, std::size_t src_pos, std::size_t size, std::size_t dst_pos) = 0;
 
     virtual void label(const std::string& name) = 0;
     virtual void jump(const std::string& name) = 0;

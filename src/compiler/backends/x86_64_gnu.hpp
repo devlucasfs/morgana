@@ -76,7 +76,6 @@ protected:
         }
     }
 
-    /// Loads an operand into a 64-bit register, sign- or zero-extending it.
     void load_operand(bool imm, const std::string& src, std::size_t size, bool sign,
                       const char* r64, const char* r32) {
         if( imm ) {
@@ -163,8 +162,6 @@ public:
             writeln("movq %rsp, %rbp");
         }
 
-        // The whole frame is reserved here, once. Its size is only known when the function
-        // ends, so it is a symbol defined by `.set` in the epilogue.
         writeln("subq $.LFRAME" + std::to_string(id) + ", %rsp");
     }
 
@@ -255,6 +252,23 @@ public:
         writeln(std::string(mov) + " " + reg + ", " + dst);
     }
 
+    void store_ptr(symbols& sym, std::size_t size, std::size_t ptr_pos, bool ptr_lea,
+                   bool lea, std::string& src) override {
+        writeln(std::string(ptr_lea ? "leaq " : "movq ") + generate_position(ptr_pos) + ", %rcx");
+
+        if( lea ) {
+            writeln("leaq " + src + ", %rax");
+            writeln("movq %rax, (%rcx)");
+            return;
+        }
+
+        const char* mov = move_instruction(size);
+        const char* reg = accumulator(size);
+
+        writeln(std::string(mov) + " " + src + ", " + reg);
+        writeln(std::string(mov) + " " + reg + ", (%rcx)");
+    }
+
     void sret(symbols& sym, std::size_t pos) override {
         writeln("leaq " + generate_position(pos) + ", %rdi");
     }
@@ -308,9 +322,15 @@ public:
             );
         }
 
-    // Only accounts for the bytes: the prologue reserves the whole frame at once.
     void alloca(std::size_t size) override {
         frame += align_stack(size);
+    }
+
+    void copy_bytes(symbols& sym, std::size_t src_pos, std::size_t size, std::size_t dst_pos) override {
+        writeln("leaq " + generate_position(src_pos) + ", %rsi");
+        writeln("leaq " + generate_position(dst_pos) + ", %rdi");
+        writeln("movq $" + std::to_string(size) + ", %rcx");
+        writeln("rep movsb");
     }
 
     void ret_int(symbols& sym, std::string& data, std::size_t id) override {
@@ -397,8 +417,6 @@ public:
         writeln("movq %rax, " + generate_position(pos));
     }
 
-    // ───────────── control flow / arithmetic ─────────────
-
     void label(const std::string& name) override {
         set_tabs(0);
         writeln(block_label(name) + ":");
@@ -460,6 +478,15 @@ public:
             writeln(std::string(set) + " %al");
         }
 
+        writeln(
+            std::string(move_instruction(dst_size)) + " "
+            + accumulator(dst_size) + ", " + generate_position(dst_pos)
+        );
+    }
+
+    void cast(symbols& sym, std::size_t src_pos, std::size_t src_size, bool src_signed,
+              std::size_t dst_pos, std::size_t dst_size) override {
+        load_operand(false, generate_position(src_pos), src_size, src_signed, "%rax", "%eax");
         writeln(
             std::string(move_instruction(dst_size)) + " "
             + accumulator(dst_size) + ", " + generate_position(dst_pos)

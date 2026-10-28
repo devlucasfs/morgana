@@ -39,6 +39,7 @@ struct codegen {
     backend_void(param, (symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret), sym, index, pos, size, sret);
     backend_void(deref, (symbols& sym, std::size_t src_pos, bool via_lea, std::size_t size, std::size_t dst_pos), sym, src_pos, via_lea, size, dst_pos);
     backend_void(string_ptr, (symbols& sym, const std::string& bytes, std::size_t pos), sym, bytes, pos);
+    backend_void(cast, (symbols& sym, std::size_t src_pos, std::size_t src_size, bool src_signed, std::size_t dst_pos, std::size_t dst_size), sym, src_pos, src_size, src_signed, dst_pos, dst_size);
 
     static size_t align_up(size_t v, size_t a) {
         return (v + a - 1) & ~(a - 1);
@@ -51,8 +52,6 @@ struct codegen {
         return a;
     }
 
-    // Returns the stack offset of a new slot. The backend only accounts for the bytes:
-    // the frame is reserved once, in the function prologue.
     size_t alloca(std::size_t size) {
         if( size == 0 ) return pos;
 
@@ -183,7 +182,6 @@ struct codegen {
         backend->syscall(sym, number, args, p);
     }
 
-    // ───────────── control flow / arithmetic ─────────────
 
     void label(symbols& sym, const std::string& name) {
         backend->label(name);
@@ -197,7 +195,6 @@ struct codegen {
         backend->branch(p, size, nonzero, name);
     }
 
-    /// Type of an operand, or nullopt when it is an integer literal.
     std::optional<types::type> operand_type(symbols& sym, const std::string& value) {
         if( is_integer_literal(value) ) return std::nullopt;
 
@@ -214,7 +211,6 @@ struct codegen {
         return std::nullopt;
     }
 
-    /// `dst = op a, b` — `a`/`b` are names or integer literals
     void binary(symbols& sym, const std::string& op, size_t size,
                 const std::string& a, const std::string& b,
                 size_t dst, size_t dst_size) {
@@ -239,5 +235,19 @@ struct codegen {
         auto [b_imm, b_src] = operand(b);
 
         backend->binary(sym, op, size, a_imm, a_src, b_imm, b_src, dst, dst_size);
+    }
+
+    void store_ptr(symbols& sym, size_t ptr_pos, bool ptr_lea, types::type type, std::string value) {
+        auto [lea, src] = _load_data(sym, value, type);
+        backend->store_ptr(sym, type.size, ptr_pos, ptr_lea, lea, src);
+    }
+
+    void copy_slot(symbols& sym, size_t src_pos, size_t size, size_t dst_pos) {
+        if( size == 1 || size == 2 || size == 4 || size == 8 ) {
+            std::string src = "-" + std::to_string(src_pos) + "(%rbp)";
+            backend->store(sym, size, false, src, dst_pos);
+            return;
+        }
+        backend->copy_bytes(sym, src_pos, size, dst_pos);
     }
 };
