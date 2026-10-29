@@ -56,7 +56,15 @@ mangled(build) (cstring mpath, cstring target, cstring runa, cstring libs)
     }
 
     Lexer lexer(mpath);
-    parser(lexer, asm_file.string(), extensor);
+    #include <typeinfo>
+    #include <cstdio>
+
+    try {
+        parser(lexer, asm_file.string(), extensor);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[morgana] exception! (%s) : %s\n", typeid(e).name(), e.what());
+        return;
+    }
 
     std::vector<std::string> objects;
     for( const auto& entry : fs::directory_iterator(objects_folder) )

@@ -36,7 +36,7 @@ struct codegen {
 
     backend_void(extern_fn, (symbols& sym, std::string data) , sym, data);
     backend_void(save_sret, (symbols& sym, std::size_t pos) , sym, pos);
-    backend_void(param, (symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret), sym, index, pos, size, sret);
+    backend_void(param, (symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret, bool tuple), sym, index, pos, size, sret, tuple);
     backend_void(deref, (symbols& sym, std::size_t src_pos, bool via_lea, std::size_t size, std::size_t dst_pos), sym, src_pos, via_lea, size, dst_pos);
     backend_void(string_ptr, (symbols& sym, const std::string& bytes, std::size_t pos), sym, bytes, pos);
     backend_void(cast, (symbols& sym, std::size_t src_pos, std::size_t src_size, bool src_signed, std::size_t dst_pos, std::size_t dst_size), sym, src_pos, src_size, src_signed, dst_pos, dst_size);
@@ -97,7 +97,14 @@ struct codegen {
     }
 
     void argument(symbols& sym, subroutine& sub, std::string arg, size_t i, bool sret) {
+        const bool tuple_param = sub.args[i].kind == types::mtuple;
+
+        if( tuple_param && is_integer_literal(arg) )
+            CompilerOutputs::fatal("A tuple argument can't be a literal: '" + arg + "'");
+
         auto [lea, src] = _load_data(sym, arg, sub.args[i]);
+        if( tuple_param ) lea = true;
+
         backend->argument(sym, lea, src, i, sret);
     }
 

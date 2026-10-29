@@ -69,7 +69,7 @@ public:
     virtual void ret_int(symbols& sym, std::string& data, std::size_t id) = 0;
     virtual void save_sret(symbols& sym, std::size_t pos) = 0;
     virtual void ret_value(symbols& sym, std::size_t pos, std::size_t size, bool tuple, std::size_t id) = 0;
-    virtual void param(symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret) = 0;
+    virtual void param(symbols& sym, std::size_t index, std::size_t pos, std::size_t size, bool sret, bool tuple) = 0;
     virtual void deref(symbols& sym, std::size_t src_pos, bool via_lea, std::size_t size, std::size_t dst_pos) = 0;
     virtual void string_ptr(symbols& sym, const std::string& bytes, std::size_t pos) = 0;
     virtual void cast(symbols& sym, std::size_t src_pos, std::size_t src_size, bool src_signed,

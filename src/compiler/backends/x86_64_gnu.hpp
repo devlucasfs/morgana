@@ -101,6 +101,26 @@ protected:
         }
     }
 
+    void copy_from_r11(std::size_t dst_pos, std::size_t size) {
+        std::size_t off = 0;
+
+        while( off < size ) {
+            const std::size_t left  = size - off;
+            const std::size_t chunk = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
+
+            writeln(
+                std::string(move_instruction(chunk)) + " " + std::to_string(off)
+                + "(%r11), " + accumulator(chunk)
+            );
+            writeln(
+                std::string(move_instruction(chunk)) + " " + accumulator(chunk)
+                + ", " + generate_position(dst_pos - off)
+            );
+
+            off += chunk;
+        }
+    }
+
 public:
     explicit x86_64_gnu(const std::string& output) : assembly_backend(output) {}
 
@@ -184,6 +204,8 @@ public:
         writeln(".size " + name + ", . - " + name);
     }
 
+    // A tuple argument is passed by pointer: the caller must call this with `lea = true`
+    // and `src` being the tuple's stack slot, so the callee receives its address.
     void argument(symbols& sym, bool lea, std::string& src, std::size_t index, bool sret) override {
         if( sret ) index++;
 
@@ -300,27 +322,37 @@ public:
     }
 
     void param(symbols& sym, std::size_t index, std::size_t pos,
-                   std::size_t size, bool sret) override {
-            if( sret ) index++;
+               std::size_t size, bool sret, bool tuple) override {
+        if( sret ) index++;
 
-            const std::string dst = generate_position(pos);
+        if( tuple ) {
+            if( index < arg_register_count )
+                writeln(std::string("movq ") + registers[index] + ", %r11");
+            else
+                writeln("movq " + std::to_string(16 + 8 * (index - arg_register_count)) + "(%rbp), %r11");
 
-            if( index < arg_register_count ) {
-                writeln(
-                    std::string(move_instruction(size)) + " "
-                    + param_register(index, size) + ", " + dst
-                );
-                return;
-            }
+            copy_from_r11(pos, size);
+            return;
+        }
 
-            const std::size_t offset = 16 + 8 * (index - arg_register_count);
+        const std::string dst = generate_position(pos);
 
-            writeln("movq " + std::to_string(offset) + "(%rbp), %rax");
+        if( index < arg_register_count ) {
             writeln(
                 std::string(move_instruction(size)) + " "
-                + accumulator(size) + ", " + dst
+                + param_register(index, size) + ", " + dst
             );
+            return;
         }
+
+        const std::size_t offset = 16 + 8 * (index - arg_register_count);
+
+        writeln("movq " + std::to_string(offset) + "(%rbp), %rax");
+        writeln(
+            std::string(move_instruction(size)) + " "
+            + accumulator(size) + ", " + dst
+        );
+    }
 
     void alloca(std::size_t size) override {
         frame += align_stack(size);

@@ -689,7 +689,7 @@ inline std::vector<destroyer_arg> parse_destroyer(Lexer& lex, symbols& sym, code
             CompilerOutputs::fatal("'" + args[i].name + "' is already defined.");
 
         size_t p = asmgen.alloca(args[i].type.size);
-        asmgen.param(sym, i, p, args[i].type.size, sret);
+        asmgen.param(sym, i, p, args[i].type.size, sret, args[i].type.kind == types::mtuple);
         sym.push(args[i].name, borrowed(args[i].type, p));
     }
 
