@@ -59,6 +59,13 @@ protected:
             || op == "slt" || op == "sle" || op == "sgt" || op == "sge";
     }
 
+
+    void cleanup_after_call() {
+        if( pending_cleanup != 0 )
+            writeln("addq $" + std::to_string(pending_cleanup) + ", %rsp");
+        stack_args = pending_cleanup = 0;
+    }
+
     static long long immediate_value(const std::string& src, std::size_t size, bool sign) {
         const std::string digits = src.substr(1);   // drop '$'
         long long v = (!digits.empty() && digits[0] == '-')
@@ -238,11 +245,7 @@ public:
 
     void call(symbols& sym, std::string& label) override {
         writeln("call " + label);
-
-        if( pending_cleanup != 0 ) {
-            writeln("addq $" + std::to_string(pending_cleanup) + ", %rsp");
-        }
-        stack_args = pending_cleanup = 0;
+        cleanup_after_call();
     }
 
     void collect_ret(symbols& sym, std::size_t pos, std::size_t size, bool sret) override {
@@ -524,4 +527,16 @@ public:
             + accumulator(dst_size) + ", " + generate_position(dst_pos)
         );
     }
+
+    public:
+        void function_address(symbols& sym, const std::string& name, std::size_t pos) override {
+            writeln("leaq " + name + "(%rip), %rax");
+            writeln("movq %rax, " + generate_position(pos));
+        }
+
+        void call_indirect(symbols& sym, bool lea, const std::string& src) override {
+            writeln(std::string(lea ? "leaq " : "movq ") + src + ", %r11");
+            writeln("call *%r11");
+            cleanup_after_call();
+        }
 };

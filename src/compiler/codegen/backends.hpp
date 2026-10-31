@@ -88,4 +88,12 @@ public:
                          const std::vector<syscall_arg>& args, std::size_t pos) {
         throw std::runtime_error("syscall not supported by this backend");
     }
+
+    virtual void function_address(symbols& sym, const std::string& name, std::size_t pos) {
+        throw std::runtime_error("function pointers not supported by this backend");
+    }
+
+    virtual void call_indirect(symbols& sym, bool lea, const std::string& src) {
+        throw std::runtime_error("call_indirect not supported by this backend");
+    }
 };

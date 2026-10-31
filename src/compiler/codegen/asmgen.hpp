@@ -257,4 +257,65 @@ struct codegen {
         }
         backend->copy_bytes(sym, src_pos, size, dst_pos);
     }
+
+    backend_void(function_address, (symbols& sym, const std::string& name, std::size_t pos), sym, name, pos);
+
+    // like `argument`, but without a signature: the type comes from the symbol itself
+    void argument_untyped(symbols& sym, const std::string& arg, size_t i) {
+        bool lea = false;
+        std::string src;
+
+        if( is_integer_literal(arg) ) {
+            src = "$" + arg;
+        } else {
+            auto symbol = sym.lookup(arg);
+            if(! symbol.has_value() ) CompilerOutputs::fatal("Invalid data informed: '" + arg + "'");
+
+            size_t pos = 0;
+            types::type t;
+
+            if( std::holds_alternative<allocation>(symbol.value()) ) {
+                auto a = std::get<allocation>(symbol.value());
+                lea = true, pos = a.pos, t = a.allocated;
+            }
+            else if( std::holds_alternative<borrowed>(symbol.value()) ) {
+                auto b = std::get<borrowed>(symbol.value());
+                pos = b.pos, t = b.allocated;
+            }
+            else {
+                CompilerOutputs::fatal("'" + arg + "' can't be used as an argument");
+            }
+
+            if( t.kind == types::mtuple ) lea = true;
+            src = "-" + std::to_string(pos) + "(%rbp)";
+        }
+
+        backend->argument(sym, lea, src, i, false);
+    }
+
+    void call_indirect(symbols& sym, const std::string& name) {
+        auto symbol = sym.lookup(name);
+        if(! symbol.has_value() ) CompilerOutputs::fatal("Value " + name + " not found");
+
+        bool lea = false;
+        size_t pos = 0;
+        types::type t;
+
+        if( std::holds_alternative<allocation>(symbol.value()) ) {
+            auto a = std::get<allocation>(symbol.value());
+            lea = true, pos = a.pos, t = a.allocated;
+        }
+        else if( std::holds_alternative<borrowed>(symbol.value()) ) {
+            auto b = std::get<borrowed>(symbol.value());
+            pos = b.pos, t = b.allocated;
+        }
+        else {
+            CompilerOutputs::fatal("'" + name + "' can't be used as a call target");
+        }
+
+        if( t.kind != types::mptr )
+            CompilerOutputs::fatal("call_indirect needs a pointer, but '" + name + "' is a " + t.kto_string());
+
+        backend->call_indirect(sym, lea, "-" + std::to_string(pos) + "(%rbp)");
+    }
 };

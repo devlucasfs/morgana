@@ -283,6 +283,19 @@ inline void parse_ret(Lexer& lex, symbols& sym, codegen& asmgen) {
     CompilerOutputs::fatal("'" + data + "' can't be returned");
 }
 
+// call_indirect <ptr>(<args>)    # void only: the signature isn't known
+inline void parse_call_indirect(Lexer& lex, symbols& sym, codegen& asmgen) {
+    auto target = next_token(lex, "function pointer name");
+
+    assert(lex, {"("});
+    auto args = get_block(lex, ")");
+
+    for( size_t i = args.size(); i-- > 0; )
+        asmgen.argument_untyped(sym, args[i], i);
+
+    asmgen.call_indirect(sym, target);
+}
+
 // storep <type> <ptr>, <value>     (*ptr = value, `type` is how wide the write is)
 inline void parse_storep(Lexer& lex, symbols& sym, codegen& asmgen) {
     auto type   = types::get_from(lex);
@@ -419,6 +432,20 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
         case hash("ptr_to"): {
             auto target = next_token(lex, "value name");
             auto val    = lookup_or_fatal(sym, target, "Value");
+
+            if( std::holds_alternative<unfold>(val) )
+                   CompilerOutputs::fatal("'" + target + "' is only declared with `unfold`; define it before taking its address");
+
+            if( std::holds_alternative<subroutine>(val) ) {
+                types::type ptr_t;
+                ptr_t.kind = types::mptr;
+                ptr_t.recalculate();
+
+                size_t p = asmgen.alloca(ptr_t.size);
+                sym.push(name, borrowed(ptr_t, p));
+                asmgen.function_address(sym, target, p);
+                return;
+            }
 
             types::type t;
             size_t pos = 0;
@@ -722,6 +749,7 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
             case hash("brnz"):   parse_branch(lex, sym, asmgen, true);  continue;
             case hash("@_"):     destroyer_args = parse_destroyer(lex, sym, asmgen, current); continue;
             case hash("}"):      parse_close(sym, asmgen);          continue;
+            case hash("call_indirect"): parse_call_indirect(lex, sym, asmgen); continue;
 
             default: {
                 if( is_label_token(*token) ) {
