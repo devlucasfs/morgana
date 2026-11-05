@@ -7,10 +7,11 @@
 #include <vector>
 #include <algorithm>
 
-#define MTYPES                         \
-    X(mi8) X(mi16) X(mi32) X(mi64) \
-    X(mu8) X(mu16) X(mu32) X(mu64) \
-    X(mvoid) X(mptr) X(mtuple)
+#define MTYPES                          \
+    X(mi8)    X(mi16) X(mi32)   X(mi64) \
+    X(mu8)    X(mu16) X(mu32)   X(mu64) \
+    X(mvoid)  X(mptr) X(mtuple)         \
+    X(musize) X(misize)
 
 struct types {
     using type = types;
@@ -80,7 +81,8 @@ struct types {
             case mu64: size = 8;
             break;
 
-            case mptr: size = BASE_ALIGNMENT;
+            case mptr: case musize:
+            case misize: size = BASE_ALIGNMENT;
             break;
 
             case mvoid: size = 0;

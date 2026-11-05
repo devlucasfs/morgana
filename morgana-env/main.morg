@@ -1,13 +1,39 @@
-unfold i64 main(i32)
-extern void development_exit(i64)
+void sleep(i64) {
+@_ : cycles
+i = alloc i64
+store i 0
+::Lf90014a70b8b::
+t7d633c6f92da = load i
+t9f8bc99eb6f9 = load cycles
+t1a7914059fa3 = slt t7d633c6f92da, t9f8bc99eb6f9
+brez t1a7914059fa3, L189d721586f4
+::L2b29712625a9::
+tacc340dac741 = load i
+tdffb933e1b72 = add tacc340dac741, 1
+store i tdffb933e1b72
+br Lf90014a70b8b
+::L189d721586f4::
+}
+unfold i64 main()
 
 void _start() {
-t05d615051a81 = call main(14)
-call development_exit(t05d615051a81)
-}
+tfbd447374f8b = call main()
 }
 
-i64 main(i32) {
-@_ : test
-ret test
+i64 main() {
+tfc873067d421 = io_load 0x4, 8
+t62be9c0b7b2b = or tfc873067d421, 32
+io_store 0x4, 8, t62be9c0b7b2b
+::L70c110a7bb41::
+ted8a825efe57 = io_load 0x5, 8
+tb7249d036e53 = or ted8a825efe57, 32
+io_store 0x5, 8, tb7249d036e53
+call sleep(50000)
+t424731af21ac = io_load 0x5, 8
+t1acdeb7fd2cc = and t424731af21ac, -33
+io_store 0x5, 8, t1acdeb7fd2cc
+call sleep(50000)
+br L70c110a7bb41
+::L6214a80a41ae::
+ret 0
 }

@@ -10,6 +10,7 @@ struct syscall_arg {
 
 #include "../codegen/backends.hpp"
 #include "x86_64_gnu.hpp"
+#include "avr_atmega328p.hpp"
 // #include "./backends/x86_64_sysv.hpp"
 // #include "./backends/x86_64_windows.hpp"
 // #include "./backends/aarch64.hpp"
@@ -19,7 +20,11 @@ struct syscall_arg {
 
 
 struct assembly_factory {
-    static std::unique_ptr<assembly_backend> create(const target& config) {
+    static std::unique_ptr<assembly_backend> create(const target_t& config) {
+        if( config.architecture == AVRATMEGA328P && config.convention == NOS ) return std::make_unique<avr_atmega328p>(
+            config.output
+        );
+
         if( config.architecture == X86_64 && config.convention == GNU ) return std::make_unique<x86_64_gnu>(
             config.output
         );

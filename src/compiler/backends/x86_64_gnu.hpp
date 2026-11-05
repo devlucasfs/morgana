@@ -55,7 +55,7 @@ protected:
     }
 
     static bool is_signed_op(const std::string& op) {
-        return op == "sdiv" || op == "srem"
+        return op == "sdiv" || op == "srem" || op == "sar"
             || op == "slt" || op == "sle" || op == "sgt" || op == "sge";
     }
 
@@ -126,6 +126,87 @@ protected:
 
             off += chunk;
         }
+    }
+
+    // ── registers / mapped io ──
+
+    // `ax`, `si`, `r9`... at 8/16/32/64 bits (`rax` / `eax` spellings are accepted too)
+    static std::string hw_register(std::string name, std::size_t bits) {
+        const int col = bits == 64 ? 0 : bits == 32 ? 1 : bits == 16 ? 2 : 3;
+
+        static const char* legacy[8][4] = {
+            { "%rax", "%eax", "%ax", "%al"   }, { "%rbx", "%ebx", "%bx", "%bl"   },
+            { "%rcx", "%ecx", "%cx", "%cl"   }, { "%rdx", "%edx", "%dx", "%dl"   },
+            { "%rsi", "%esi", "%si", "%sil"  }, { "%rdi", "%edi", "%di", "%dil"  },
+            { "%rbp", "%ebp", "%bp", "%bpl"  }, { "%rsp", "%esp", "%sp", "%spl"  },
+        };
+        static const char* names[8] = { "ax", "bx", "cx", "dx", "si", "di", "bp", "sp" };
+
+        if( name.size() == 3 && (name[0] == 'r' || name[0] == 'e') ) {
+            const std::string tail = name.substr(1);
+            for( const char* n : names ) if( tail == n ) { name = tail; break; }
+        }
+
+        for( int i = 0; i < 8; i++ )
+            if( name == names[i] ) return legacy[i][col];
+
+        if( name.size() >= 2 && name[0] == 'r' ) {
+            const std::string num = name.substr(1);
+            if( num == "8" || num == "9" || (num.size() == 2 && num[0] == '1' && num[1] >= '0' && num[1] <= '5') ) {
+                static const char* suffix[4] = { "", "d", "w", "b" };
+                return "%" + name + suffix[col];
+            }
+        }
+
+        throw std::runtime_error("Unknown register '" + name + "'");
+    }
+
+    static std::size_t loc_bytes(const reg_loc& r) {
+        if( r.bits != 8 && r.bits != 16 && r.bits != 32 && r.bits != 64 )
+            throw std::runtime_error("Unsupported register / io size: " + std::to_string(r.bits));
+        return r.bits / 8;
+    }
+
+    void load_imm(std::uint64_t v, const char* r64) {
+        const long long s = static_cast<long long>(v);
+        if( s >= INT32_MIN && s <= INT32_MAX ) writeln("movq $" + std::to_string(s) + ", " + r64);
+        else                                   writeln("movabsq $" + std::to_string(s) + ", " + r64);
+    }
+
+    static std::uint64_t bit_mask(std::size_t width) {
+        return width >= 64 ? ~0ULL : ((1ULL << width) - 1);
+    }
+
+    // the register / mapped address -> %rax (zero-extended). Scratch: %rdx
+    void loc_read(const reg_loc& r) {
+        const std::size_t n = loc_bytes(r);
+        std::string src;
+
+        if( r.io ) { load_imm(r.addr, "%rdx"); src = "(%rdx)"; }
+        else         src = hw_register(r.name, r.bits);
+
+        switch( n ) {
+            case 1: writeln("movzbl " + src + ", %eax"); break;
+            case 2: writeln("movzwl " + src + ", %eax"); break;
+            case 4: writeln("movl "   + src + ", %eax"); break;
+            default: writeln("movq "  + src + ", %rax"); break;
+        }
+    }
+
+    // %rax -> the register / mapped address (only the low `bits` are written). Scratch: %rdx
+    void loc_write(const reg_loc& r) {
+        const std::size_t n = loc_bytes(r);
+        std::string dst;
+
+        if( r.io ) { load_imm(r.addr, "%rdx"); dst = "(%rdx)"; }
+        else         dst = hw_register(r.name, r.bits);
+
+        writeln(std::string(move_instruction(n)) + " " + accumulator(n) + ", " + dst);
+    }
+
+    void load_value(const syscall_arg& v, std::size_t bytes, const char* r64, const char* r32) {
+        if( v.lea ) { writeln("leaq " + v.src + ", " + r64); return; }
+        load_operand(v.imm, v.src, v.imm ? bytes : v.size, false, r64, r32);
     }
 
 public:
@@ -426,7 +507,7 @@ public:
         auto it = strings.find(bytes);
 
         if( it == strings.end() ) {
-            const std::string label = ".Lstr" + std::to_string(strings.size());
+            const std::string label = ".Lstr" + std::to_string(next_unique_id());
             it = strings.emplace(bytes, label).first;
 
             const bool mergeable = bytes.find('\0') == std::string::npos;
@@ -484,6 +565,10 @@ public:
         else if( op == "mul" )  writeln("imulq %rcx, %rax");
         else if( op == "and" )  writeln("andq %rcx, %rax");
         else if( op == "or" )   writeln("orq %rcx, %rax");
+        else if( op == "xor" )  writeln("xorq %rcx, %rax");
+        else if( op == "shl" )  writeln("shlq %cl, %rax");   // count in %cl
+        else if( op == "shr" )  writeln("shrq %cl, %rax");   // logical: operand was zero-extended
+        else if( op == "sar" )  writeln("sarq %cl, %rax");   // arithmetic: operand was sign-extended
         else if( op == "sdiv" || op == "srem" ) {
             writeln("cqto");
             writeln("idivq %rcx");
@@ -529,6 +614,61 @@ public:
     }
 
     public:
+        void loc_load(symbols& sym, const reg_loc& r, std::size_t pos) override {
+            const std::size_t n = loc_bytes(r);
+            loc_read(r);
+            writeln(std::string(move_instruction(n)) + " " + accumulator(n) + ", " + generate_position(pos));
+        }
+
+        void loc_store(symbols& sym, const reg_loc& r, const syscall_arg& value) override {
+            load_value(value, loc_bytes(r), "%rax", "%eax");
+            loc_write(r);
+        }
+
+        void loc_get(symbols& sym, const reg_loc& r, std::size_t lo, std::size_t width,
+                     std::size_t dst_pos, std::size_t dst_size) override {
+            if( width == 0 || lo + width > r.bits )
+                throw std::runtime_error("The slice doesn't fit in " + std::to_string(r.bits) + " bits");
+
+            loc_read(r);
+            if( lo != 0 ) writeln("shrq $" + std::to_string(lo) + ", %rax");
+
+            if( width < 64 ) {
+                const std::uint64_t m = bit_mask(width);
+                if( m <= static_cast<std::uint64_t>(INT32_MAX) ) {
+                    writeln("andq $" + std::to_string(m) + ", %rax");
+                } else {
+                    load_imm(m, "%rcx");
+                    writeln("andq %rcx, %rax");
+                }
+            }
+
+            writeln(std::string(move_instruction(dst_size)) + " " + accumulator(dst_size) + ", " + generate_position(dst_pos));
+        }
+
+        void loc_set(symbols& sym, const reg_loc& r, std::size_t lo, std::size_t width,
+                     const syscall_arg& value) override {
+            if( width == 0 || lo + width > r.bits )
+                throw std::runtime_error("The slice doesn't fit in " + std::to_string(r.bits) + " bits");
+
+            const std::uint64_t m = bit_mask(width);
+
+            loc_read(r);                                   // current contents -> %rax
+
+            load_imm(~(m << lo), "%rcx");                  // clear the slice
+            writeln("andq %rcx, %rax");
+
+            load_value(value, loc_bytes(r), "%rdx", "%edx");
+            if( width < 64 ) {                             // new bits, masked and shifted
+                load_imm(m, "%rcx");
+                writeln("andq %rcx, %rdx");
+            }
+            if( lo != 0 ) writeln("shlq $" + std::to_string(lo) + ", %rdx");
+            writeln("orq %rdx, %rax");
+
+            loc_write(r);
+        }
+
         void function_address(symbols& sym, const std::string& name, std::size_t pos) override {
             writeln("leaq " + name + "(%rip), %rax");
             writeln("movq %rax, " + generate_position(pos));

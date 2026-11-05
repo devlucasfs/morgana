@@ -5,11 +5,14 @@
 #include "./backends/factory.hpp"
 #include "./codegen/backends.hpp"
 #include "./codegen/asmgen.hpp"
+#include "hash.hpp"
 #include "parser/blocks.hpp"
 #include "parser/types.hpp"
 #include <algorithm>
 #include <cctype>
 #include <initializer_list>
+#include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -103,7 +106,8 @@ inline std::string decode_literal(const std::string& token) {
 // <name> = <op> <a>, <b>
 inline bool is_binary_op(const std::string& op) {
     static const std::unordered_set<std::string> ops = {
-        "add", "sub", "mul", "sdiv", "udiv", "srem", "urem", "and", "or",
+        "add", "sub", "mul", "sdiv", "udiv", "srem", "urem", "and", "or", "xor",
+        "shl", "shr", "sar",
         "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
     };
     return ops.count(op) > 0;
@@ -225,6 +229,7 @@ inline void parse_extern(Lexer& lex, symbols& sym, codegen& asmgen) {
 }
 
 // unfold <type> <name>(<types>)
+// (a declaration only: if the function is never cited, nothing is emitted and it is not an error)
 inline void parse_unfold(Lexer& lex, symbols& sym, codegen& asmgen) {
     auto ret  = types::get_from(lex);
     auto name = next_token(lex, "function name");
@@ -412,6 +417,119 @@ inline void parse_close(symbols& sym, codegen& asmgen) {
     asmgen.epilogue(sym);
 }
 
+// ───────────── registers and mapped io ─────────────
+//   <n> = reg_load <name>, <bits>              reg_store <name>, <bits>, <value>
+//   <n> = reg_get  <name>, <bits>, <lo>, <w>   reg_set   <name>, <bits>, <lo>, <w>, <value>
+//
+//   io_*  : the same, with an address in the I/O SPACE (0x00..0x3F on AVR: the datasheet's
+//           "I/O address" column, PORTB = 0x05). The backend uses in / out / sbi / cbi.
+//   mem_* : the same, with an address in the DATA SPACE (the datasheet's memory address,
+//           PORTB = 0x25, UCSR0A = 0xC0, ...). The backend uses lds / sts.
+//
+//   A mem_* location is a reg_loc with `io = true` and `name = "mem"`: the backends that
+//   care about the difference (AVR) read it from there; the others see an address.
+
+enum class loc_kind { reg, io, mem };
+
+inline loc_kind kind_of(const std::string& statement) {
+    if( statement.rfind("io_",  0) == 0 ) return loc_kind::io;
+    if( statement.rfind("mem_", 0) == 0 ) return loc_kind::mem;
+    return loc_kind::reg;
+}
+
+inline size_t parse_count(Lexer& lex, const char* what) {
+    auto t = next_token(lex, what);
+    if(! is_number(t) || t[0] == '-' || t.size() > 9 )
+        CompilerOutputs::fatal(std::string("Expected ") + what + " (a non-negative number), but received '" + t + "'");
+    return std::stoul(t);
+}
+
+inline reg_loc parse_location(Lexer& lex, loc_kind kind) {
+    reg_loc r;
+    r.io = kind != loc_kind::reg;
+
+    const bool addressed = kind != loc_kind::reg;
+    auto head = next_token(lex, kind == loc_kind::io  ? "io address"
+                              : kind == loc_kind::mem ? "memory address"
+                                                      : "register name");
+
+    if( addressed ) {
+        // the lexer splits `0x25` into `0` + `x25`: glue the pieces back until the comma
+        if( head[0] == '0' ) {
+            while( true ) {
+                auto nx = lex.peek();
+                if(! nx || *nx == "," ) break;
+                head += *lex.next();
+            }
+        }
+
+        if( head.size() < 3 || head.size() > 18 || head[0] != '0' || (head[1] != 'x' && head[1] != 'X')
+            || head.find_first_not_of("0123456789abcdefABCDEF", 2) != std::string::npos )
+            CompilerOutputs::fatal("Expected a hexadecimal address (0x...), but received '" + head + "'");
+        r.addr = std::stoull(head.substr(2), nullptr, 16);
+
+        if( kind == loc_kind::mem ) r.name = "mem";
+    } else {
+        r.name = head;
+    }
+
+    assert(lex, {","}, "A register / io access needs its size in bits: name, bits");
+    r.bits = parse_count(lex, "the size in bits");
+
+    if( r.bits != 8 && r.bits != 16 && r.bits != 32 && r.bits != 64 )
+        CompilerOutputs::fatal("The size must be 8, 16, 32 or 64 bits, but received " + std::to_string(r.bits));
+
+    return r;
+}
+
+// `, lo, width`
+inline std::pair<size_t, size_t> parse_slice(Lexer& lex, const reg_loc& r) {
+    assert(lex, {","}, "A slice needs lo and width: name, bits, lo, width");
+    size_t lo = parse_count(lex, "the first bit of the slice");
+    assert(lex, {","}, "A slice needs lo and width: name, bits, lo, width");
+    size_t width = parse_count(lex, "the width of the slice");
+
+    if( width == 0 || lo + width > r.bits )
+        CompilerOutputs::fatal(
+            "The slice " + std::to_string(lo) + "+" + std::to_string(width)
+            + " doesn't fit in " + std::to_string(r.bits) + " bits"
+        );
+
+    return { lo, width };
+}
+
+inline types::type unsigned_type(size_t bytes) {
+    types::type t;
+    switch( bytes ) {
+        case 1:  t.kind = types::mu8;  break;
+        case 2:  t.kind = types::mu16; break;
+        case 4:  t.kind = types::mu32; break;
+        case 8: t.kind = types::mu64; break;
+        default: t.kind = types::musize; break;
+    }
+    t.size = bytes;
+    return t;
+}
+
+inline size_t slice_bytes(size_t width) {
+    return width <= 8 ? 1 : width <= 16 ? 2 : width <= 32 ? 4 : 8;
+}
+
+// reg_store <name>, <bits>, <value>   |   io_store <addr>, <bits>, <value>   |   mem_store ...
+inline void parse_loc_store(Lexer& lex, symbols& sym, codegen& asmgen, loc_kind kind) {
+    auto loc = parse_location(lex, kind);
+    assert(lex, {","}, "A store needs a value: name, bits, value");
+    asmgen.loc_store(sym, loc, next_token(lex, "value"));
+}
+
+// reg_set <name>, <bits>, <lo>, <width>, <value>   |   io_set ...   |   mem_set ...
+inline void parse_loc_set(Lexer& lex, symbols& sym, codegen& asmgen, loc_kind kind) {
+    auto loc = parse_location(lex, kind);
+    auto [lo, width] = parse_slice(lex, loc);
+    assert(lex, {","}, "A set needs a value: name, bits, lo, width, value");
+    asmgen.loc_set(sym, loc, lo, width, next_token(lex, "value"));
+}
+
 // <name> = <statement>
 inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, codegen& asmgen) {
     auto statement = next_token(lex, "statement");
@@ -443,7 +561,7 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
 
                 size_t p = asmgen.alloca(ptr_t.size);
                 sym.push(name, borrowed(ptr_t, p));
-                asmgen.function_address(sym, target, p);
+                asmgen.function_address(sym, target, p);   // cites the function
                 return;
             }
 
@@ -525,6 +643,33 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
             return;
         }
 
+        // <name> = call_indirect <ret type> <ptr>(<args>)
+        // The signature isn't known, so the return type is written in the instruction.
+        // A tuple return goes through sret, exactly like a direct `call`.
+        case hash("call_indirect"): {
+            auto ret    = types::get_from(lex);
+            auto target = next_token(lex, "function pointer name");
+
+            if( ret.kind == types::mvoid )
+                CompilerOutputs::fatal("call_indirect returns void: don't collect it, use `call_indirect " + target + "(...)`");
+
+            assert(lex, {"("});
+            auto args = get_block(lex, ")");
+
+            size_t p = asmgen.alloca(ret.size);
+            sym.push(name, borrowed(ret, p));
+
+            bool tuple = ret.kind == types::mtuple;
+            if( tuple ) asmgen.sret(sym, p);
+
+            for( size_t i = args.size(); i-- > 0; )
+                asmgen.argument_untyped(sym, args[i], i, tuple);
+
+            asmgen.call_indirect(sym, target);
+            asmgen.collect_ret(sym, p, ret);
+            return;
+        }
+
         case hash("deref"): {
             auto type   = types::get_from(lex);
             auto source = next_token(lex, "pointer name");
@@ -576,9 +721,12 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
             if( values.size() > 6 )
                 CompilerOutputs::fatal("A syscall takes at most 6 arguments");
 
+            types::type ret;
+            ret.kind = types::misize;
+            ret.size = 8;
 
-            size_t p = asmgen.alloca(8);
-            // sym.push(name, borrowed(ret, p));
+            size_t p = asmgen.alloca(ret.size);
+            sym.push(name, borrowed(ret, p));
 
             asmgen.syscall(sym, number, values, p);
             return;
@@ -628,6 +776,33 @@ inline void parse_assignment(const std::string& name, Lexer& lex, symbols& sym, 
             size_t p = asmgen.alloca(type.size);
             sym.push(name, borrowed(type, p));
             asmgen.cast(sym, src_pos, from.size, src_signed, p, type.size);
+            return;
+        }
+
+        // <n> = reg_load <name>, <bits>   |   <n> = io_load <addr>, <bits>   |   <n> = mem_load <addr>, <bits>
+        case hash("reg_load"):
+        case hash("io_load"):
+        case hash("mem_load"): {
+            auto loc = parse_location(lex, kind_of(statement));
+
+            auto t = unsigned_type(loc.bits / 8);
+            size_t p = asmgen.alloca(t.size);
+            sym.push(name, borrowed(t, p));
+            asmgen.loc_load(sym, loc, p);
+            return;
+        }
+
+        // <n> = reg_get <name>, <bits>, <lo>, <width>   |   <n> = io_get ...   |   <n> = mem_get ...
+        case hash("reg_get"):
+        case hash("io_get"):
+        case hash("mem_get"): {
+            auto loc = parse_location(lex, kind_of(statement));
+            auto [lo, width] = parse_slice(lex, loc);
+
+            auto t = unsigned_type(slice_bytes(width));
+            size_t p = asmgen.alloca(t.size);
+            sym.push(name, borrowed(t, p));
+            asmgen.loc_get(sym, loc, lo, width, p, t.size);
             return;
         }
 
@@ -723,17 +898,26 @@ inline std::vector<destroyer_arg> parse_destroyer(Lexer& lex, symbols& sym, code
     return args;
 }
 
-inline void parser(Lexer& lex, std::string output, std::string extensor) {
-    target config {
-        .architecture = X86_64,
-        .convention   = GNU,
-        .output       = output,
+inline target_t parser(Lexer& lex, std::string output, std::string arch_os, bool use_ram = false) {
+    target_t config;
+
+    switch( hash(arch_os) ) {
+               case hash("avr_atmega328p"): config = { .architecture = AVRATMEGA328P, .convention = NOS };
+        break; case hash("x86_64-linux"):   config = { .architecture = X86_64,        .convention = GNU };
+        break; default: CompilerOutputs::fatal("Unknown arch");
+    }
+
+    config.output = output;
+
+    codegen::backend_factory factory = [config](const std::string& out) -> std::unique_ptr<assembly_backend> {
+        target_t c = config;
+        c.output = out;
+        return assembly_factory::create(c);
     };
 
-    auto backend = assembly_factory::create(config);
     std::optional<subroutine> current;
     std::vector<destroyer_arg> destroyer_args;
-    codegen asmgen(std::move(backend));
+    codegen asmgen(std::move(factory), output, use_ram);
     symbols sym;
 
     while( auto token = lex.next() ) {
@@ -750,6 +934,12 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
             case hash("@_"):     destroyer_args = parse_destroyer(lex, sym, asmgen, current); continue;
             case hash("}"):      parse_close(sym, asmgen);          continue;
             case hash("call_indirect"): parse_call_indirect(lex, sym, asmgen); continue;
+            case hash("reg_store"): parse_loc_store(lex, sym, asmgen, loc_kind::reg); continue;
+            case hash("io_store"):  parse_loc_store(lex, sym, asmgen, loc_kind::io);  continue;
+            case hash("mem_store"): parse_loc_store(lex, sym, asmgen, loc_kind::mem); continue;
+            case hash("reg_set"):   parse_loc_set(lex, sym, asmgen, loc_kind::reg);   continue;
+            case hash("io_set"):    parse_loc_set(lex, sym, asmgen, loc_kind::io);    continue;
+            case hash("mem_set"):   parse_loc_set(lex, sym, asmgen, loc_kind::mem);   continue;
 
             default: {
                 if( is_label_token(*token) ) {
@@ -769,4 +959,8 @@ inline void parser(Lexer& lex, std::string output, std::string extensor) {
             }
         }
     }
+
+    asmgen.finalize();
+
+    return config;
 }

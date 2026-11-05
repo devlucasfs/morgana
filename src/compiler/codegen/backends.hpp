@@ -4,7 +4,10 @@
 #include "../backends/factory.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
+#include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -15,27 +18,56 @@
 #define backend_ret(type, name, ...) \
     type name args { return backend->name(__VA_ARGS__); }
 
-enum arch { X86, X86_64, ARM, AARCH64, RISCV32, RISCV64 };
-enum abi { SYSTEM_V, WINDOWS, EABI, GNU };
+enum arch { NARCH, X86, X86_64, ARM, AARCH64, RISCV32, RISCV64, AVRATMEGA328P };
+enum os { NOS, WINDOWS, MACOS, GNU, BSD };
 
-struct target {
+struct target_t {
     arch architecture;
-    abi convention;
+    os convention;
     std::string output;
+
+    target_t() = default;
+};
+
+struct reg_loc {
+    bool          io   = false;
+    std::string   name;
+    std::uint64_t addr = 0;
+    std::size_t   bits = 0;
 };
 
 class assembly_backend {
+public:
+    static constexpr const char* memory_target = ":memory:";
+
+    static bool is_memory_target(const std::string& output) {
+        return output == memory_target;
+    }
+
 protected:
-    std::ofstream stream;
+    std::ofstream      file;
+    std::ostringstream memory;
+    std::ostream&      stream;
     std::size_t tabs = 0;
 
 public:
-    explicit assembly_backend(std::string output) : stream(output) {}
+    explicit assembly_backend(std::string output)
+        : file(is_memory_target(output) ? std::ofstream() : std::ofstream(output)),
+          memory(),
+          stream(is_memory_target(output) ? static_cast<std::ostream&>(memory)
+                                          : static_cast<std::ostream&>(file)) {}
+
+    static std::size_t next_unique_id() {
+        static std::size_t counter = 0;
+        return counter++;
+    }
 
     virtual ~assembly_backend() = default;
 
     assembly_backend(assembly_backend&) = delete;
     assembly_backend& operator=(assembly_backend&) = delete;
+
+    std::string take_text() { return memory.str(); }
 
     void writeln(const std::string& value)
     {   for( std::size_t i = 0; i < tabs; i++ ) stream << '\t';
@@ -52,8 +84,6 @@ public:
 
     virtual void extern_fn(symbols& sym, std::string& name) = 0;
 
-    // Reserves `size` more bytes in the current function frame. It does NOT emit code:
-    // the whole frame is reserved once, in the prologue (so jumps can never skip it).
     virtual void alloca(std::size_t size) = 0;
 
     virtual void prologue(symbols& sym, std::string& name, std::size_t id) = 0;
@@ -95,5 +125,23 @@ public:
 
     virtual void call_indirect(symbols& sym, bool lea, const std::string& src) {
         throw std::runtime_error("call_indirect not supported by this backend");
+    }
+
+    virtual void loc_load(symbols& sym, const reg_loc& r, std::size_t pos) {
+        throw std::runtime_error("register / io access not supported by this backend");
+    }
+
+    virtual void loc_store(symbols& sym, const reg_loc& r, const syscall_arg& value) {
+        throw std::runtime_error("register / io access not supported by this backend");
+    }
+
+    virtual void loc_get(symbols& sym, const reg_loc& r, std::size_t lo, std::size_t width,
+                         std::size_t dst_pos, std::size_t dst_size) {
+        throw std::runtime_error("register / io access not supported by this backend");
+    }
+
+    virtual void loc_set(symbols& sym, const reg_loc& r, std::size_t lo, std::size_t width,
+                         const syscall_arg& value) {
+        throw std::runtime_error("register / io access not supported by this backend");
     }
 };
