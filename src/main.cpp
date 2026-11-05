@@ -5,6 +5,7 @@
 #include "./compiler/hash.hpp"
 #include "./compiler_outputs.hpp"
 #include "./externs.hpp"
+#include "build_system/backends.hpp"
 #include "build_system/behaviors/factory.hpp"
 
 #include <cstdio>
@@ -76,54 +77,50 @@ extern "C" void
 mangled(build) (cstring mpath, cstring target, cstring ao, cstring libs, cstring sake_c, bool use_ram, bool enable_then = false)
 {   std::string targetf(target), libraries(libs), arch_os(ao), sake(sake_c);
     fs::path target_folder  = fs::path(targetf);
-    fs::path clib_folder    = target_folder  / MCLIBC_REPO;
-    fs::path objects_folder = target_folder  / "objects";
-    fs::path output_object  = objects_folder / "m.o";
+    fs::path output_object  = target_folder  / "m.o";
     fs::path seva_file      = target_folder  / "Sake.eva";
     fs::path asm_file       = target_folder  / "asm.s";
     fs::path output_file    = target_folder  / "bin";
-    fs::create_directory(objects_folder);
-    fs::create_directory(clib_folder);
 
     set((char*) sake.c_str());
     setoutput((char*) seva_file.string().c_str());
 
     if( prepare() != 0 ) {
         std::fprintf(stderr, "[morgana] exception! Sake file can't be translated to Eva.\n");
-        return;
+        std::exit(14);
     }
 
-    std::stringstream stream(libraries);
-    std::string lib;
-    while( std::getline(stream, lib, ',') )
-    {   fs::path header = clib_folder / (lib + ".h");
-        fs::path src = clib_folder / (lib + ".c");
-        fs::path obj = objects_folder / (lib + ".o");
-
-        if( fs::exists(obj) ) continue;
-
-        curl_download("https://raw.githubusercontent.com/Carla-repos/mclibc/main/lib/" + lib + ".c", src.string());
-        curl_download("https://raw.githubusercontent.com/Carla-repos/mclibc/main/lib/" + lib + ".h", header.string());
-
-        std::ifstream file(src);
-        std::string line;
-        if( std::getline(file, line) && line.rfind("//h: ", 0) == 0 )
-        {   std::stringstream headers(line.substr(5));
-            std::string name;
-            while( std::getline(headers, name, ' ') )
-            {   if( name.empty() ) continue;
-
-                fs::path dependency = clib_folder / (name + ".h");
-                if( fs::exists(dependency) ) continue;
-
-                curl_download("https://raw.githubusercontent.com/Carla-repos/mclibc/main/lib/" + name + ".h", dependency.string());
-            }
-        }
-
-        std::stringstream ss;
-        ss << "clang -c \"" << src.string() << "\" -o \"" << obj.string() << "\" -O3 -ffreestanding -fno-builtin";
-        std::system(ss.str().c_str());
-    }
+//     std::stringstream stream(libraries);
+//     std::string lib;
+//     while( std::getline(stream, lib, ',') )
+//     {   fs::path header = clib_folder / (lib + ".h");
+//         fs::path src = clib_folder / (lib + ".c");
+//         fs::path obj = objects_folder / (lib + ".o");
+//
+//         if( fs::exists(obj) ) continue;
+//
+//         curl_download("https://raw.githubusercontent.com/Carla-repos/mclibc/main/lib/" + lib + ".c", src.string());
+//         curl_download("https://raw.githubusercontent.com/Carla-repos/mclibc/main/lib/" + lib + ".h", header.string());
+//
+//         std::ifstream file(src);
+//         std::string line;
+//         if( std::getline(file, line) && line.rfind("//h: ", 0) == 0 )
+//         {   std::stringstream headers(line.substr(5));
+//             std::string name;
+//             while( std::getline(headers, name, ' ') )
+//             {   if( name.empty() ) continue;
+//
+//                 fs::path dependency = clib_folder / (name + ".h");
+//                 if( fs::exists(dependency) ) continue;
+//
+//                 curl_download("https://raw.githubusercontent.com/Carla-repos/mclibc/main/lib/" + name + ".h", dependency.string());
+//             }
+//         }
+//
+//         std::stringstream ss;
+//         ss << "clang -c \"" << src.string() << "\" -o \"" << obj.string() << "\" -O3 -ffreestanding -fno-builtin";
+//         std::system(ss.str().c_str());
+//     }
 
     Lexer lexer(mpath);
 
@@ -132,13 +129,8 @@ mangled(build) (cstring mpath, cstring target, cstring ao, cstring libs, cstring
         config = parser(lexer, asm_file.string(), arch_os, use_ram);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[morgana] exception! (%s) : %s\n", typeid(e).name(), e.what());
-        return;
+        std::exit(14);
     }
-
-    std::vector<std::string> objects;
-    for( const auto& entry : fs::directory_iterator(objects_folder) )
-        if( entry.is_regular_file() && entry.path().extension() == ".o" )
-            objects.push_back(entry.path().string());
 
     std::stringstream ss;
     auto append = [&](std::string_view v) {
@@ -178,7 +170,7 @@ mangled(build) (cstring mpath, cstring target, cstring ao, cstring libs, cstring
 
     if( decided == "_void" ) {
         std::fprintf(stderr, "[morgana] exception! Invalid Sake file\n");
-        return;
+        std::exit(14);
     }
 
     auto tools = eva_get_value_from_namespace(eva, decided.c_str(), "tools");
@@ -209,10 +201,12 @@ mangled(build) (cstring mpath, cstring target, cstring ao, cstring libs, cstring
         behaviour = behaviour_factory::create(config);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[morgana] exception! (%s) : %s\n", typeid(e).name(), e.what());
-        return;
+        std::exit(14);
     }
+
+    extra_d ex(output_file.string(), output_object.string());
 
     behaviour->build(eva, decided, target_folder);
     behaviour->link(eva, decided, target_folder);
-    if( enable_then ) behaviour->then(eva, decided, target_folder);
+    // if( enable_then ) behaviour->then(eva, decided, target_folder);
 }

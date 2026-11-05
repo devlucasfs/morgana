@@ -6,15 +6,14 @@
 #include <vector>
 
 struct extra_d {
-    std::vector<std::string> files;
-    std::string extra_file;
+    std::string end, middle;
 
     extra_d() = default;
     extra_d(
-        std::string output_file,
-        std::vector<std::string> files
-    ) : files(files), extra_file(output_file) {}
-}
+        std::string end_file,
+        std::string middle_file
+    ) : end(end_file), middle(middle_file) {}
+};
 
 class assembly_behaviour {
 public:
@@ -26,7 +25,7 @@ public:
         CompilerOutputs::fatal("Fail when to build: " + msg);
     };
 
-    virtual int build(EvaParser *eva, std::string ns, std::filesystem::path path, extra_d data) { return 0; };
-    virtual int link( EvaParser *eva, std::string ns, std::filesystem::path path, extra_d data)  { return 0; };
-    virtual int then( EvaParser *eva, std::string ns, std::filesystem::path path, extra_d data)  { return 0; };
+    virtual int build(EvaParser *eva, std::string ns, std::filesystem::path path) { return 0; };
+    virtual int link( EvaParser *eva, std::string ns, std::filesystem::path path)  { return 0; };
+    virtual int then( EvaParser *eva, std::string ns, std::filesystem::path path)  { return 0; };
 };

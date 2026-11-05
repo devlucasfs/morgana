@@ -2,8 +2,8 @@
 
 #include "../backends.hpp"
 #include "../../compiler/codegen/backends.hpp"
-#include "avr_atmega328p.hpp"
-#include "x86_64_gnu.hpp"
+#include "./avr_atmega328p.hpp"
+#include "./x86_64_gnu.hpp"
 
 #include <memory>
 
