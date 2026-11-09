@@ -1,7 +1,7 @@
 #pragma once
-#include "../lexer.hpp"
+#include "../compiler_outputs.hpp"
 #include "../hash.hpp"
-#include "../../compiler_outputs.hpp"
+#include "./lexer.hpp"
 #include <optional>
 #include <string>
 #include <vector>

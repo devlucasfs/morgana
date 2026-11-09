@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../backends.hpp"
-#include "../../externs.hpp"
-#include "../common.hpp"
+#include "src/toolchain/behaviours.hpp"
+#include "export.hpp"
+#include "src/toolchain/common.hpp"
 #include <cstdlib>
 
 namespace fs = std::filesystem;

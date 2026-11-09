@@ -8,16 +8,10 @@ struct syscall_arg {
     std::size_t size = 8;
 };
 
-#include "../codegen/backends.hpp"
-#include "x86_64_gnu.hpp"
-#include "avr_atmega328p.hpp"
-// #include "./backends/x86_64_sysv.hpp"
-// #include "./backends/x86_64_windows.hpp"
-// #include "./backends/aarch64.hpp"
-
+#include "./backends.hpp"
+#include "export.hpp"
 #include <memory>
 #include <stdexcept>
-
 
 struct assembly_factory {
     static std::unique_ptr<assembly_backend> create(const target_t& config) {

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../backends.hpp"
-#include "../../externs.hpp"
-#include "../common.hpp"
+#include "src/toolchain/behaviours.hpp"
+#include "export.hpp"
+#include "src/toolchain/common.hpp"
 #include <cstdlib>
 
 namespace fs = std::filesystem;
@@ -30,17 +30,17 @@ class build_avr_atmega328p : public assembly_behaviour {
         return std::system(cpp.c_str());
     }
 
-    int then(EvaParser *eva, std::string ns, fs::path path) override {
+    int upload(EvaParser *eva, std::string ns, fs::path path, std::string baudrate, std::string device) override {
         auto upload = eva_get_value_from_namespace(eva, ns.c_str(), "upload");
         if( upload.tag != eva_string ) build_fail("Sake: Invalid upload field format.");
 
         std::string cpp(upload.data.string);
         eva_dump_pointer(upload);
 
-        auto file = target.output;
         auto path_hex = path / "avr.hex";
-
         auto hex = path_hex.string();
+
+        auto file = target.output;
 
         replace(cpp, "baudrate", "115200");
         replace(cpp, "device", "/dev/ttyUSB0");

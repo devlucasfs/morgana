@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../codegen/backends.hpp"
-#include "factory.hpp"
+#include "src/codegen/backends.hpp"
+#include "src/codegen/factory.hpp"
 
 #include <cstddef>
 #include <cstdint>

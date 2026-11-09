@@ -1,9 +1,8 @@
 #pragma once
 
-#include "../backends.hpp"
-#include "../../compiler/codegen/backends.hpp"
-#include "./avr_atmega328p.hpp"
-#include "./x86_64_gnu.hpp"
+#include "./behaviours.hpp"
+#include "../codegen/backends.hpp"
+#include "../../export.hpp"
 
 #include <memory>
 

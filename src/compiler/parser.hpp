@@ -1,17 +1,18 @@
 #pragma once
 
-#include "./lexer.hpp"
-#include "./symbols.hpp"
-#include "./backends/factory.hpp"
+#include "../symbols.hpp"
+#include "../codegen/factory.hpp"
+#include "../hash.hpp"
+#include "../target.hpp"
+
 #include "./codegen/backends.hpp"
 #include "./codegen/asmgen.hpp"
-#include "hash.hpp"
-#include "parser/blocks.hpp"
-#include "parser/types.hpp"
+#include "./lexer.hpp"
+#include "./blocks.hpp"
+#include "./types.hpp"
+
 #include <algorithm>
-#include <cctype>
 #include <initializer_list>
-#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -900,12 +901,7 @@ inline std::vector<destroyer_arg> parse_destroyer(Lexer& lex, symbols& sym, code
 
 inline target_t parser(Lexer& lex, std::string output, std::string arch_os, bool use_ram = false) {
     target_t config;
-
-    switch( hash(arch_os) ) {
-               case hash("avr_atmega328p"): config = { .architecture = AVRATMEGA328P, .convention = NOS };
-        break; case hash("x86_64-linux"):   config = { .architecture = X86_64,        .convention = GNU };
-        break; default: CompilerOutputs::fatal("Unknown arch");
-    }
+    gen_target(&config, arch_os);
 
     config.output = output;
 

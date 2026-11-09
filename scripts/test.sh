@@ -3,7 +3,7 @@ cd src
 g++ -std=c++17 -g -ggdb  -O0 -fPIC -fpermissive -fexceptions \
     -shared main.cpp \
     -o ../bin/libmorgana.so \
-    -I. \
+    -I. -I.. \
     -L"$HOME/.carla/bin" -leva -lruna -lsamar \
     -llzma -lm \
     $(pkg-config --static --libs libcurl) \

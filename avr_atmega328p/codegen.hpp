@@ -1,17 +1,15 @@
 #pragma once
 
-#include "../codegen/backends.hpp"
-#include "factory.hpp"
+#include "src/codegen/backends.hpp"
+#include "src/codegen/factory.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 /*x
  * AVR ATmega328P backend (avr-gas syntax, 8-bit RISC, Harvard, 2 KiB SRAM).
@@ -38,8 +36,14 @@
  *     r1 is never touched (no mul), so the zero-reg convention is irrelevant.
  *   - SP is set with the usual cli-safe idiom; the frame size is only known at the end
  *     of the function, so it is a `.set .LFRAMEn` referenced through lo8()/hi8().
- *   - `_start` is special-cased: sets SP = RAMEND, copies .data/.rodata from flash
- *     (so strings work without avr-libc's crt), and emits a reset vector.
+ *   - String literals: each function that uses a literal gets a private buffer at the bottom
+ *     of its frame (past the IR slots, before the outgoing-argument area), filled where the
+ *     literal is used: short ones with ldi/st (no flash at all), long ones with an lpm loop
+ *     from .progmem.data (flash only, never copied to SRAM). `string_ptr` yields a normal
+ *     SRAM pointer, so ld/st/deref work on it like on any other stack data.
+ *     See `strings_on_stack` / `literal_inline_max`.
+ *   - `_start` is special-cased: sets SP = RAMEND, copies .data from flash (initialised
+ *     globals) and emits a reset vector.
  *     With avr-gcc's normal crt just name your entry `main` and ignore all that.
  *
  * Mapped registers / io (the reg_loc handed to loc_*):
@@ -57,6 +61,13 @@ protected:
     // ── knobs ──
     static constexpr bool        reset_vector = true;     // `jmp _start` in .vectors
     static constexpr bool        init_data    = true;     // copy .data from flash in _start
+    // true : literals stay in flash and are copied (lpm) into a stack buffer where they are used
+    // false: legacy mode, literals go to .rodata and rely on the linker script / _start copying
+    //        .rodata flash -> SRAM (costs permanent SRAM; ld/st can only read it after that copy)
+    static constexpr bool        strings_on_stack = true;
+    // literals up to this size (incl. NUL) are built with `ldi`/`st` and take no flash at all;
+    // bigger ones are copied from flash with an lpm loop (smaller code, ~6 bytes is the break-even)
+    static constexpr std::size_t literal_inline_max = 8;
     static constexpr std::size_t ram_end      = 0x08FF;
 
     // ── ABI constants ──
@@ -70,7 +81,10 @@ protected:
     static constexpr unsigned long long io_max     = 0x3F;   // in / out reach 0x00..0x3F
     static constexpr unsigned long long io_bit_max = 0x1F;   // sbi / cbi reach 0x00..0x1F
 
-    std::unordered_map<std::string, std::string> strings;
+    std::unordered_map<std::string, std::string>  strings;      // literal bytes -> flash label (emitted once per program)
+    std::unordered_map<std::string, std::size_t>  fn_strings;   // literal bytes -> end offset of this function's stack buffer
+    std::size_t str_bytes = 0;      // total stack-buffer bytes for literals in this function
+    std::size_t cur_id    = 0;      // id of the function being emitted
     std::size_t sret_slot = 0;
     std::size_t frame     = 0;
     std::size_t max_out   = 0;      // outgoing argument slots used in this function
@@ -309,6 +323,59 @@ protected:
         writeln("brne " + loop);
     }
 
+    // copy `size` (>= 1) bytes from FLASH (Z, byte address) to SRAM (X) with a loop.
+    // Clobbers r0, r22:r23, X, Z
+    void emit_copy_flash(std::size_t size) {
+        if( size == 0 ) return;
+
+        const std::string loop = tmp();
+        writeln("ldi r22, " + std::to_string(size & 0xFF));
+        writeln("ldi r23, " + std::to_string((size >> 8) & 0xFF));
+        put_label(loop);
+        writeln("lpm r0, Z+");
+        writeln("st X+, r0");
+        writeln("subi r22, 1");
+        writeln("sbci r23, 0");
+        writeln("brne " + loop);
+    }
+
+    // flash (or legacy .rodata) copy of a literal, emitted once per program; returns its label
+    const std::string& literal(const std::string& bytes, const char* section) {
+        auto it = strings.find(bytes);
+        if( it != strings.end() ) return it->second;
+
+        const std::string label = ".Lstr" + std::to_string(next_unique_id());
+        it = strings.emplace(bytes, label).first;
+
+        writeln(std::string(".pushsection ") + section);
+        writeln(label + ":");
+
+        for( std::size_t i = 0; i <= bytes.size(); i += 16 ) {
+            std::string line = ".byte ";
+            for( std::size_t j = i; j < i + 16 && j <= bytes.size(); j++ ) {
+                unsigned v = j < bytes.size() ? static_cast<unsigned char>(bytes[j]) : 0;
+                if( j != i ) line += ", ";
+                line += std::to_string(v);
+            }
+            writeln(line);
+        }
+
+        writeln(".balign 2");
+        writeln(".popsection");
+        return it->second;
+    }
+
+    // pair <- address of the literal buffer that ends `end` bytes past the IR locals.
+    // The buffer is [Y - (LFLOC + end), Y - (LFLOC + end) + size); LFLOC (the final size of the
+    // IR locals) is only known at the epilogue, so it is a `.set` symbol (like .LFRAME).
+    // `lo` must be >= 16 (subi/sbci).
+    void str_addr(int lo, std::size_t end) {
+        const std::string ex = ".LFLOC" + std::to_string(cur_id) + "+" + std::to_string(end);
+        writeln("movw " + r(lo) + ", r28");
+        writeln("subi " + r(lo)     + ", lo8(" + ex + ")");
+        writeln("sbci " + r(lo + 1) + ", hi8(" + ex + ")");
+    }
+
     // block A (8 bytes) -> outgoing argument slot `index`
     void store_out(std::size_t index) {
         max_out = std::max(max_out, index + 1);
@@ -526,6 +593,9 @@ public:
         sret_slot = 0;
         frame     = 0;
         max_out   = 0;
+        str_bytes = 0;
+        cur_id    = id;
+        fn_strings.clear();
 
         emptylines(1);
 
@@ -586,9 +656,16 @@ public:
 
     void epilogue(symbols& sym, std::string& name, std::size_t id) override {
         // outgoing area [SP+1, SP+8*max_out] must not touch the lowest local byte
-        const std::size_t total = frame + (max_out ? slot_bytes * max_out + 1 : 0);
+        // frame layout, top to bottom:  [IR slots: frame][literal buffers: str_bytes][outgoing args]
+        const std::size_t total = frame + str_bytes + (max_out ? slot_bytes * max_out + 1 : 0);
+
+        constexpr std::size_t sram_bytes = ram_end - 0x100 + 1;     // 0x0100..RAMEND = 2 KiB
+        if( total >= sram_bytes )
+            throw std::runtime_error("The frame of '" + name + "' needs " + std::to_string(total)
+                + " bytes, but the ATmega328P only has " + std::to_string(sram_bytes) + " bytes of SRAM");
 
         set_tabs(1);
+        writeln(".set .LFLOC" + std::to_string(id) + ", " + std::to_string(frame));
         writeln(".set .LFRAME" + std::to_string(id) + ", " + std::to_string(total));
 
         set_tabs(0);
@@ -785,31 +862,46 @@ public:
     }
 
     void string_ptr(symbols& sym, const std::string& bytes, std::size_t pos) override {
-        auto it = strings.find(bytes);
-
-        if( it == strings.end() ) {
-            const std::string label = ".Lstr" + std::to_string(next_unique_id());
-            it = strings.emplace(bytes, label).first;
-
-            // .rodata ends up in SRAM (copied from flash by _start / crt), so ld/st can read it
-            writeln(".pushsection .rodata");
-            writeln(label + ":");
-
-            for( std::size_t i = 0; i <= bytes.size(); i += 16 ) {
-                std::string line = ".byte ";
-                for( std::size_t j = i; j < i + 16 && j <= bytes.size(); j++ ) {
-                    unsigned v = j < bytes.size() ? static_cast<unsigned char>(bytes[j]) : 0;
-                    if( j != i ) line += ", ";
-                    line += std::to_string(v);
-                }
-                writeln(line);
-            }
-
-            writeln(".popsection");
+        // legacy: literal in .rodata, rely on the linker script copying it to SRAM
+        if( !strings_on_stack ) {
+            const std::string& l = literal(bytes, ".rodata");
+            writeln("ldi r24, lo8(" + l + ")");
+            writeln("ldi r25, hi8(" + l + ")");
+            store_pointer(pos, ir_word);
+            return;
         }
 
-        writeln("ldi r24, lo8(" + it->second + ")");
-        writeln("ldi r25, hi8(" + it->second + ")");
+        // a stack buffer in this function (shared by equal literals), filled every time this
+        // point runs, so it also works inside loops / branches
+        const std::size_t size = bytes.size() + 1;
+        auto fs = fn_strings.find(bytes);
+
+        if( fs == fn_strings.end() ) {
+            str_bytes += size;
+            fs = fn_strings.emplace(bytes, str_bytes).first;
+        }
+
+        const std::size_t end = fs->second;
+
+        str_addr(26, end);                                      // X = buffer
+
+        if( size <= literal_inline_max ) {
+            // ldi + st = same code size as lpm + st, but no Z setup, no flash data, fewer cycles
+            int last = -1;
+            for( std::size_t i = 0; i < size; i++ ) {
+                const int v = i < bytes.size() ? static_cast<unsigned char>(bytes[i]) : 0;
+                if( v != last ) { writeln("ldi r22, " + std::to_string(v)); last = v; }
+                writeln("st X+, r22");
+            }
+        } else {
+            // .progmem.data stays in flash (avr-ld puts it in .text)
+            const std::string& l = literal(bytes, ".progmem.data,\"a\",@progbits");
+            writeln("ldi r30, lo8(" + l + ")");                // Z = flash byte address (lpm)
+            writeln("ldi r31, hi8(" + l + ")");
+            emit_copy_flash(size);
+        }
+
+        str_addr(24, end);                                      // r24:r25 = buffer (an SRAM pointer)
         store_pointer(pos, ir_word);
     }
 

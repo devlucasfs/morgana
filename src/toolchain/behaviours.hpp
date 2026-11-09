@@ -1,9 +1,10 @@
 #pragma once
 
-#include "../compiler/codegen/backends.hpp"
+#include "../compiler_outputs.hpp"
+#include "../target.hpp"
 #include "../externs.hpp"
 #include <filesystem>
-#include <vector>
+#include <stdexcept>
 
 struct extra_d {
     std::string end, middle;
@@ -27,5 +28,7 @@ public:
 
     virtual int build(EvaParser *eva, std::string ns, std::filesystem::path path) { return 0; };
     virtual int link( EvaParser *eva, std::string ns, std::filesystem::path path)  { return 0; };
-    virtual int then( EvaParser *eva, std::string ns, std::filesystem::path path)  { return 0; };
+    virtual int upload( EvaParser *eva, std::string ns, std::filesystem::path path, std::string baudrate, std::string device)  {
+        throw std::runtime_error("there is no implementation for upload in this target");
+    };
 };

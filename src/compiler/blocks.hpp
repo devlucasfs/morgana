@@ -1,7 +1,7 @@
 #include <string>
 #include <vector>
 
-#include "../lexer.hpp"
+#include "./lexer.hpp"
 
 static std::vector<std::string> get_block(
     Lexer& lex,

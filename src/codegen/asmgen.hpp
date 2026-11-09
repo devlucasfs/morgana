@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../parser/types.hpp"
+#include "../compiler/types.hpp"
 #include "../symbols.hpp"
 #include "./backends.hpp"
 #include "backends.hpp"
