@@ -30,13 +30,16 @@ std::unique_ptr<codegen_interface_methods> instance(
 if( std::holds_alternative<T>(it) ) do {                         \
     auto data = std::get<T>(it);                                 \
     block                                                        \
+    continue;                                                    \
 } while(false)
+
+#define inline_it(T)                                            \
+check_it(T, { backend->T(data); });                              \
 
 void codegen(std::string target, FILE *output, Ins ins) {
     auto backend = instance(target, output);
     for( auto& it : ins.set ) {
-        check_it(prologue, {
-            backend->prologue(data);
-        });
+        inline_it(prologue);
+        inline_it(epilogue);
     }
 }

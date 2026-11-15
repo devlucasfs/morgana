@@ -12,17 +12,26 @@ my $BUILD   = "build";
 my $BIN     = "bin";
 my $OUTPUT  = "$BIN/libmorgana.so";
 
-my $MODE = shift // "cpp";
 my $VERBOSE = 0;
+my $ZED_SET_CONFIG = 0;
+my $FORCE = 0;
 
 @ARGV = grep {
     if( $_ eq "-v" || $_ eq "--verbose" ) {
         $VERBOSE = 1;
         0;
+    } elsif( $_ eq "--force" ) {
+        $FORCE = 1;
+        0;
+    } elsif( $_ eq "--zed-set-config" ) {
+        $ZED_SET_CONFIG = 1;
+        0;
     } else {
         1;
     }
 } @ARGV;
+
+my $MODE = shift // "cpp";
 
 my %MODES = (
     c => {
@@ -53,6 +62,8 @@ my %MODES = (
     },
 );
 
+my @BEAR_CMD = ("bear", "--");
+
 sub verbose {
     my (@args) = @_;
 
@@ -80,6 +91,19 @@ sub run {
 
     die "Command failed with exit code $status.\n"
         if $status != 0;
+}
+
+sub zed_set_config {
+    verbose("\n[ZED] Generating compile_commands.json with bear\n");
+
+    # Bear only records commands that actually run, so the nested
+    # build is forced to recompile everything.
+    my @inner = ($^X, $0, "--force", $MODE);
+    push @inner, "-v" if $VERBOSE;
+
+    run(@BEAR_CMD, @inner);
+
+    print "Zed configs created (compile_commands.json).\n";
 }
 
 sub find_files {
@@ -149,6 +173,11 @@ die "Unknown build mode: $MODE\n"
     unless exists $MODES{$MODE};
 
 my $CONFIG = $MODES{$MODE};
+
+if( $ZED_SET_CONFIG ) {
+    zed_set_config();
+    exit 0;
+}
 
 if( $VERBOSE ) {
     print "========================================\n";
@@ -238,6 +267,8 @@ foreach my $source (@sources) {
         $object,
         $depfile,
     );
+
+    $changed = 1 if $FORCE;
 
     if( $CONFIG->{headers} && !$changed ) {
         for my $header (@headers) {

@@ -1,0 +1,24 @@
+[
+  {
+    "file": "src/main.cpp",
+    "arguments": [
+      "g++",
+      "-ggdb",
+      "-fPIC",
+      "-Isrc/",
+      "-I.",
+      "-MMD",
+      "-MP",
+      "-MF",
+      "build/main.d",
+      "-MT",
+      "build/main.o",
+      "-c",
+      "src/main.cpp",
+      "-o",
+      "build/main.o"
+    ],
+    "directory": "/home/dev_lucasfs/Documents/morgana",
+    "output": "build/main.o"
+  }
+]

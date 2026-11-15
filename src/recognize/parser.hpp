@@ -145,7 +145,7 @@ helperS(function_def) {
         params.push_back(ty);
     }
 
-    tk = tks.at(i++);
+    tk = tks.at(i);
     if( tk.lex != "{" )
         syntax_error(path, tk, "Expected '{' to the function block; Was found `" + tk.lex + "`");
 

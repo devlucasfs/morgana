@@ -3,6 +3,12 @@
 .type main, @function
 main:
 .LFP0:
-pushq %rbp
-movq %rsp, %rbp
-subq $.LFRAME0, %rsp
+	pushq %rbp
+	movq %rsp, %rbp
+	subq $.LFRAME0, %rsp
+.set .LFRAME0, 0
+.LFE0:
+	leave
+	ret
+.size main, .-main
+
