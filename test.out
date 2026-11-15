@@ -1,3 +1,4 @@
+.extern puts
 .text
 .globl main
 .type main, @function
@@ -6,7 +7,18 @@ main:
 	pushq %rbp
 	movq %rsp, %rbp
 	subq $.LFRAME0, %rsp
-.set .LFRAME0, 0
+.pushsection .rodata
+.LS0:
+.byte 73,32,108,111,118,101,32,97,32,109,111,114,114,111,99,97,110,32,103,105,114,108,32,110,97,109,101,100,32,83,97,109,97,114
+.popsection
+	leaq .LS0(%rip), %rax
+	movq %rax, -8(%rbp)
+	movq -8(%rbp), %rdi
+	xorl %eax, %eax
+	call puts@PLT
+	xorl %eax, %eax
+	jmp .LFE0
+.set .LFRAME0, 16
 .LFE0:
 	leave
 	ret
