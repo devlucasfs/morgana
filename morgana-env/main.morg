@@ -1,2 +1,8 @@
-int main() {
+unfold i8 test()
+int _start() {
+    a = call test()
+}
+
+i8 test()
+{
 }

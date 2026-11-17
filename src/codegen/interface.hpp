@@ -19,11 +19,11 @@ protected:
     FILE *output;
 
 public:
-    /* When true, every line written through emit() gets a '\t' prefix. */
     bool into = false;
+    std::string entrypoint;
 
-    explicit codegen_interface_methods(FILE *output)
-        : output(output) {}
+    explicit codegen_interface_methods(FILE *output, std::string entrypoint)
+        : output(output), entrypoint(entrypoint) {}
 
     virtual ~codegen_interface_methods() = default;
 

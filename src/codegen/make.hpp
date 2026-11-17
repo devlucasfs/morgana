@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -6,6 +8,7 @@
 #include "exports.hpp"
 #include "../recognize/parser.hpp"
 #include "./interface.hpp"
+#include "./optimizer.hpp"
 
 constexpr unsigned const_hash(const char *input) {
     return (*input)
@@ -18,8 +21,8 @@ std::unique_ptr<codegen_interface_methods> instance(
     FILE *output
 ) {
 
-    #define C(name, class_name) \
-    case const_hash(name): return std::make_unique<class_name>(output);
+    #define C(name, class_name, entry) \
+    case const_hash(name): return std::make_unique<class_name>(output, entry);
 
     switch(const_hash(target.c_str())) {
         EXTENSORS(C)
@@ -40,7 +43,12 @@ check_it(T, { backend->T(data); });
 
 void codegen(std::string target, FILE *output, Ins ins) {
     auto backend = instance(target, output);
-    for( auto& it : ins.set ) {
+    auto nis = optimize(ins, opt_options {
+        .roots = { backend->entrypoint },
+        .prune_declarations = true,
+    });
+
+    for( auto& it : nis.set ) {
         inline_it(prologue);
         inline_it(epilogue);
         inline_it(extern_op);

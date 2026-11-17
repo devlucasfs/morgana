@@ -1,5 +1,7 @@
+#pragma once
+
 #define EXTENSORS(E) \
-E("x86_64-gnu", x86_64_gnu) 
+E("x86_64-gnu", x86_64_gnu, "_start") 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -32,8 +34,9 @@ E("x86_64-gnu", x86_64_gnu)
  *     pointer is the address of the slot", false means "the pointer is stored in the slot".
  */
 class x86_64_gnu : public codegen_interface_methods {
-private:
+public:
     const std::string entrypoint = "_start";
+private:
     std::size_t stack_sz = 0;
     std::string current;
     int func = 0;

@@ -1,2 +1,2 @@
 #define EXTENSORS(E) \
-E("x86_64-gnu", x86_64_gnu)
+E("x86_64-gnu", x86_64_gnu, "_start")
