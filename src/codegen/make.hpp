@@ -17,13 +17,15 @@ std::unique_ptr<codegen_interface_methods> instance(
     std::string target,
     FILE *output
 ) {
-    switch(const_hash(target.c_str())) {
-        case const_hash("x86_64-gnu"):
-            return std::make_unique<x86_64_gnu>(output);
 
-        default:
-            throw std::runtime_error(target + " isnt a valid extensor");
+    #define C(name, class_name) \
+    case const_hash(name): return std::make_unique<class_name>(output);
+
+    switch(const_hash(target.c_str())) {
+        EXTENSORS(C)
+        default: throw std::runtime_error(target + " isnt a valid extensor");
     }
+    #undef C
 }
 
 #define check_it(T, block)                                       \

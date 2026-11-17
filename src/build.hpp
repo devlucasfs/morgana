@@ -7,14 +7,21 @@
 #include "codegen/make.hpp"
 
 extern "C"
-void mangled(build) (cstring cfile) try_pattern({
+void mangled(build) (cstring cfile, cstring ctarget, cstring extensor) try_pattern({
     std::string file(cfile);
-    std::filesystem::path file_path(file);
-    auto tks = lexer(file_path);
-    auto ins = parser(file_path, tks); // instruction set
+    std::string target(ctarget);
 
-    FILE *output = std::fopen("./test.out", "w+");
-    codegen("x86_64-gnu", output, ins);
+    std::filesystem::path file_path(file);
+    std::filesystem::path target_folder(target);
+
+    std::filesystem::path asm_file = target_folder / "asm.s";
+    auto output = std::fopen(asm_file.c_str(), "w+");
+
+    auto tks = lexer(file_path);
+    auto ins = parser(file_path, tks);
+
+    codegen(extensor, output, ins);
     std::fclose(output);
+
 
 })

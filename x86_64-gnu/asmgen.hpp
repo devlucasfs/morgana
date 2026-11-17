@@ -61,8 +61,6 @@ private:
 
     enum R { RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11 };
 
-    // ───────────── layout ─────────────
-
     static std::size_t align_up(std::size_t v, std::size_t a) {
         return (v + a - 1) & ~(a - 1);
     }
@@ -176,7 +174,6 @@ private:
         return name;
     }
 
-    // contents of a slot -> 64-bit register, extended by the signedness of its type
     void load_slot(R r, const Entry& e) {
         std::size_t sz = size_of(e.type);
         bool sg = is_signed_kind(e.type.kind);
@@ -196,7 +193,6 @@ private:
         else                                          I("movabsq", imm(v), rn(r, 8));
     }
 
-    // literal, or the value of a name (a tuple is read as the address of its slot)
     void load_operand(R r, const Operand& op) {
         if( op.literal ) { load_imm(r, parse_lit(op.text)); return; }
 
@@ -205,7 +201,6 @@ private:
         else                             load_slot(r, e);
     }
 
-    // makes the low `size` bytes of r the whole 64-bit value
     void normalize(R r, std::size_t size, bool sgn) {
         if( size >= 8 ) return;
 
@@ -237,8 +232,6 @@ private:
             done += chunk;
         }
     }
-
-    // ───────────── calls ─────────────
 
     void call_common(const std::string& dst, const Ty& ret, const std::vector<Operand>& args,
                      bool sret, const std::string* direct, const Entry* target, bool target_lea) {

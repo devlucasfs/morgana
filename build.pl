@@ -7,10 +7,11 @@ use File::Find;
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
 
-my $SRC_DIR = "src";
-my $BUILD   = "build";
-my $BIN     = "bin";
-my $OUTPUT  = "$BIN/libmorgana.so";
+my $SRC_DIR     = "src";
+my $BUILD       = "build";
+my $BIN         = "bin";
+my $SCRIPTS_DIR = "scripts";
+my $OUTPUT      = "$BIN/libmorgana.so";
 
 my $VERBOSE = 0;
 my $ZED_SET_CONFIG = 0;
@@ -96,8 +97,6 @@ sub run {
 sub zed_set_config {
     verbose("\n[ZED] Generating compile_commands.json with bear\n");
 
-    # Bear only records commands that actually run, so the nested
-    # build is forced to recompile everything.
     my @inner = ($^X, $0, "--force", $MODE);
     push @inner, "-v" if $VERBOSE;
 
@@ -106,9 +105,34 @@ sub zed_set_config {
     print "Zed configs created (compile_commands.json).\n";
 }
 
+sub run_prebuild {
+    return unless -d $SCRIPTS_DIR;
+
+    my $is_windows = ($^O eq "MSWin32");
+
+    my $script = $is_windows
+        ? "$SCRIPTS_DIR/prebuild.cmd"
+        : "$SCRIPTS_DIR/prebuild.sh";
+
+    unless( -f $script ) {
+        verbose("[PREBUILD] No $script found, skipping.\n");
+        return;
+    }
+
+    verbose("\n[PREBUILD] Running $script\n");
+
+    if( $is_windows ) {
+        (my $win_path = $script) =~ s{/}{\\}g;
+        run("cmd", "/c", $win_path);
+    } else {
+        run("sh", $script);
+    }
+
+    verbose("[PREBUILD] Done.\n");
+}
+
 sub find_files {
     my ($extension) = @_;
-
     my @files;
 
     find(
@@ -193,6 +217,8 @@ if( $VERBOSE ) {
     print "Flags:      ", join(" ", @{$CONFIG->{flags}}), "\n";
     print "========================================\n";
 }
+
+run_prebuild();
 
 my @sources = find_files($CONFIG->{extension});
 my @headers = $CONFIG->{headers} ? find_files(qr/\.hpp$/) : ();

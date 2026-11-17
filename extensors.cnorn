@@ -1,0 +1,7 @@
+#include "extensors.hnorn"
+#define CNORN_IMPORTS(target, ...) \
+@import("extensors.hnorn");        \
+@import(target "asmgen.hpp");
+
+EXTENSORS(CNORN_IMPORTS)
+#undef CNORN_IMPORTS
