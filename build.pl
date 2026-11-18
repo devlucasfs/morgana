@@ -40,7 +40,7 @@ my %MODES = (
         compiler  => "gcc",
         flags     => ["-ggdb", "-fPIC", "-I.", "-Isrc/"],
         linker    => "gcc",
-        linkflags => ["-shared", "-L$ENV{HOME}/.carla/bin/", "-leva"],
+        linkflags => ["-shared", "-L$ENV{HOME}/.carla/bin/", "-leva", "-lsamar"],
         headers   => 0,
     },
 
@@ -49,7 +49,7 @@ my %MODES = (
         compiler  => "g++",
         flags     => ["-ggdb", "-fPIC", "-I.", "-Isrc/"],
         linker    => "g++",
-        linkflags => ["-shared", "-L$ENV{HOME}/.carla/bin/", "-leva"],
+        linkflags => ["-shared", "-L$ENV{HOME}/.carla/bin/", "-leva", "-lsamar"],
         headers   => 0,
     },
 
@@ -58,7 +58,7 @@ my %MODES = (
         compiler  => "g++",
         flags     => ["-ggdb", "-fPIC", "-Isrc/", "-I."],
         linker    => "g++",
-        linkflags => ["-shared", "-L$ENV{HOME}/.carla/bin/", "-leva"],
+        linkflags => ["-shared", "-L$ENV{HOME}/.carla/bin/", "-leva", "-lsamar"],
         headers   => 1,
     },
 );

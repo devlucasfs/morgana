@@ -2,11 +2,12 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <stdexcept>
 #include <string>
 
 #include "../recognize/parser.hpp"
+#include "externs.hpp"
 
-/* Helper: std::string -> const char*, usable inside printf-style calls. */
 inline const char *c(const std::string &s) {
     return s.c_str();
 }
@@ -27,10 +28,6 @@ public:
 
     virtual ~codegen_interface_methods() = default;
 
-    /* Writes fmt (printf-style) to `output`.
-     * If `into` is true, every line of fmt gets a '\t' prefix.
-     * Empty lines stay empty (no trailing tabs).
-     * Note: format index starts at 2 because `this` is argument 1. */
     __attribute__((format(printf, 2, 3)))
     void emit(const char *fmt, ...) {
         va_list ap;
@@ -92,4 +89,31 @@ public:
     virtual void loc_store_op(loc_store_op_t op) = 0;
     virtual void loc_get_op(loc_get_op_t op) = 0;
     virtual void loc_set_op(loc_set_op_t op) = 0;
+};
+
+class behaviour_interface_methods {
+public:
+    explicit behaviour_interface_methods() {};
+    virtual ~behaviour_interface_methods() = default;
+
+    void replace(std::string& cpp, const std::string& key, const std::string& value, bool disable_quotes = false) {
+        std::string placeholder = "$" + key;
+        std::string replacement = (disable_quotes) ? value : "\"" + value + "\"";
+
+        size_t pos = 0;
+        while( (pos = cpp.find(placeholder, pos)) != std::string::npos ) {
+            cpp.replace(pos, placeholder.length(), replacement);
+            pos += replacement.length();
+        }
+    };
+
+    inline void build_fail(std::string e) {
+        throw std::runtime_error(e);
+    }
+
+    virtual int link  (EvaParser *eva, std::string ns, std::filesystem::path path) { return 0; };
+    virtual int build (EvaParser *eva, std::string ns, std::filesystem::path path) { return 0; };
+    virtual int upload(EvaParser *eva, std::string ns, std::filesystem::path path, std::string baudrate, std::string device)  {
+        throw std::runtime_error("there is no implementation for upload in this target");
+    };
 };

@@ -6,22 +6,16 @@
 #include <string>
 
 #include "exports.hpp"
+#include "../hash.hpp"
 #include "../recognize/parser.hpp"
 #include "./interface.hpp"
 #include "./optimizer.hpp"
-
-constexpr unsigned const_hash(const char *input) {
-    return (*input)
-        ? static_cast<unsigned>(*input) + 33 * const_hash(input + 1)
-        : 5381;
-}
 
 std::unique_ptr<codegen_interface_methods> instance(
     std::string target,
     FILE *output
 ) {
-
-    #define C(name, class_name, entry) \
+    #define C(name, class_name, _, entry) \
     case const_hash(name): return std::make_unique<class_name>(output, entry);
 
     switch(const_hash(target.c_str())) {
@@ -29,6 +23,19 @@ std::unique_ptr<codegen_interface_methods> instance(
         default: throw std::runtime_error(target + " isnt a valid extensor");
     }
     #undef C
+}
+
+std::unique_ptr<behaviour_interface_methods> behaviours(
+    std::string target
+) {
+    #define B(name, _, class_name, entry) \
+    case const_hash(name): return std::make_unique<class_name>();
+
+    switch(const_hash(target.c_str())) {
+        EXTENSORS(B)
+        default: throw std::runtime_error(target + " isnt a valid extensor");
+    }
+    #undef B
 }
 
 #define check_it(T, block)                                       \

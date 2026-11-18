@@ -1,7 +1,7 @@
-#pragma once
-
+#pragma once 
 #define EXTENSORS(E) \
-E("x86_64-gnu", x86_64_gnu, "_start") 
+E("x86_64-linux", x86_64_linux, x86_64_linux_behaviour, "_start") 
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -33,7 +33,7 @@ E("x86_64-gnu", x86_64_gnu, "_start")
  *   - deref / storep / call_indirect follow the parser's `via_lea` flag: true means "the
  *     pointer is the address of the slot", false means "the pointer is stored in the slot".
  */
-class x86_64_gnu : public codegen_interface_methods {
+class x86_64_linux : public codegen_interface_methods {
 public:
     const std::string entrypoint = "_start";
 private:
@@ -727,14 +727,14 @@ public:
     }
 };
 
-inline std::size_t x86_64_gnu::size_of(const Ty& t) {
+inline std::size_t x86_64_linux::size_of(const Ty& t) {
     if( is_tuple(t) ) return tuple_layout(t.tuple);
     if( is_void(t) )  return 0;
     if( auto s = fixed_size(t.kind) ) return *s;
     return 8;   // int, uint, ptr
 }
 
-inline std::size_t x86_64_gnu::align_of(const Ty& t) {
+inline std::size_t x86_64_linux::align_of(const Ty& t) {
     if( is_tuple(t) ) {
         std::size_t a = 1;
         tuple_layout(t.tuple, &a);
@@ -742,4 +742,42 @@ inline std::size_t x86_64_gnu::align_of(const Ty& t) {
     }
     std::size_t s = size_of(t);
     return s == 0 ? 1 : s;
-}
+} 
+#include "src/codegen/interface.hpp"
+#include "src/externs.hpp"
+
+class x86_64_linux_behaviour : public behaviour_interface_methods {
+public:
+    using behaviour_interface_methods::behaviour_interface_methods;
+
+    int build(EvaParser *eva, std::string ns, std::filesystem::path path) override {
+        auto build = eva_get_value_from_namespace(eva, ns.c_str(), "compiling");
+        if( build.tag != eva_string ) build_fail("Sake: Invalid build field format.");
+
+        std::string cpp(build.data.string);
+        eva_dump_pointer(build);
+
+        auto file = path / "asm.s";
+        auto middle = path / "m.o";
+
+        replace(cpp, "file", file);
+        replace(cpp, "output", middle.string());
+
+        return std::system(cpp.c_str());
+    }
+
+    int link(EvaParser *eva, std::string ns, std::filesystem::path path) override {
+        auto linking = eva_get_value_from_namespace(eva, ns.c_str(), "linking");
+        if( linking.tag != eva_string ) build_fail("Sake: Invalid linking field format.");
+
+        std::string cpp(linking.data.string);
+        eva_dump_pointer(linking);
+        auto middle = path / "m.o";
+        auto output = path / "bin";
+
+        replace(cpp, "file", middle.string());
+        replace(cpp, "output", output.string());
+
+        return std::system(cpp.c_str());
+    }
+};

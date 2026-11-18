@@ -1,7 +1,7 @@
 # x86_64:linux as @arch:os
 tools: as`package, ld`package
-compiling: "as -m64 $file -o $output"
-linking: "ld $files -o $output"
+compiling: "as $file -o $output"
+linking: "ld $file -o $output"
 
 # avr_atmega328p:none as @arch:os
 tools: avr-gcc`package, avr-objdump`package, avrdude`package

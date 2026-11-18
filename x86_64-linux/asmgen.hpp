@@ -31,7 +31,7 @@
  *   - deref / storep / call_indirect follow the parser's `via_lea` flag: true means "the
  *     pointer is the address of the slot", false means "the pointer is stored in the slot".
  */
-class x86_64_gnu : public codegen_interface_methods {
+class x86_64_linux : public codegen_interface_methods {
 public:
     const std::string entrypoint = "_start";
 private:
@@ -725,14 +725,14 @@ public:
     }
 };
 
-inline std::size_t x86_64_gnu::size_of(const Ty& t) {
+inline std::size_t x86_64_linux::size_of(const Ty& t) {
     if( is_tuple(t) ) return tuple_layout(t.tuple);
     if( is_void(t) )  return 0;
     if( auto s = fixed_size(t.kind) ) return *s;
     return 8;   // int, uint, ptr
 }
 
-inline std::size_t x86_64_gnu::align_of(const Ty& t) {
+inline std::size_t x86_64_linux::align_of(const Ty& t) {
     if( is_tuple(t) ) {
         std::size_t a = 1;
         tuple_layout(t.tuple, &a);

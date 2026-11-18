@@ -1,4 +1,7 @@
-morgana-env/target/
 lastc.out
+exports.hpp
+extensors.inorn
+
+morgana-env/target/
 build/
 bin/

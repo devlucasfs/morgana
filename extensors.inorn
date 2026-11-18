@@ -1,2 +1,1 @@
-@cpragma once
-@import("extensors.hnorn"); @import("x86_64-gnu" "asmgen.hpp");
+@cpragma once @import("extensors.hnorn"); @import("x86_64-linux" "asmgen.hpp"); @import("x86_64-linux" "behaviour.hpp");
