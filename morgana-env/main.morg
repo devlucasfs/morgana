@@ -1,8 +1,38 @@
-unfold i8 test()
-int _start() {
-    a = call test()
+void sleep(i64) {
+@_ : cycles
+i = alloc i64
+store i 0
+::L734ca0d50aea::
+tb3548fc3fa73 = load i
+td091676df40d = load cycles
+tf8b20dc74bba = sle tb3548fc3fa73, td091676df40d
+brez tf8b20dc74bba, L559cd7729344
+::Leb9ddf8ef9ca::
+t5c2db180a4a5 = load i
+t9c1a86b81850 = add t5c2db180a4a5, 1
+store i t9c1a86b81850
+br L734ca0d50aea
+::L559cd7729344::
+}
+unfold i64 main()
+
+void _start() {
+t573d8a686142 = call main()
 }
 
-i8 test()
-{
+i64 main() {
+t442195be9968 = io_load 0x4, 8
+t62b55d84e803 = or t442195be9968, 32
+io_store 0x4, 8, t62b55d84e803
+::Lcf9c078dffb2::
+t1c6f58367a1d = io_load 0x5, 8
+t882c544017ec = or t1c6f58367a1d, 32
+io_store 0x5, 8, t882c544017ec
+call sleep(50000)
+t918653d91932 = io_load 0x5, 8
+t6334644ec691 = and t918653d91932, -33
+io_store 0x5, 8, t6334644ec691
+call sleep(50000)
+br Lcf9c078dffb2
+::L8d47b6b4ff4c::
 }

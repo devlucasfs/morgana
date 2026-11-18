@@ -5,6 +5,6 @@ linking: "ld $file -o $output"
 
 # avr_atmega328p:none as @arch:os
 tools: avr-gcc`package, avr-objdump`package, avrdude`package
-compiling: "avr-gcc -mmcu=atmega328p -Wall -Os -o $elf $file && avr-objcopy -O ihex -R .eeprom $elf $hex"
-linking: "" // Linkedição não necessária.
+compiling: "avr-gcc -nostartfiles -mmcu=atmega328p -Wall -Os -o $elf $file && avr-objcopy -O ihex -R .eeprom $elf $hex"
+linking: "" // Liking phase isnt needded
 upload: "sudo avrdude -F -V -c arduino -p m328p -P $device -b $baudrate -U flash:w:$hex:i"
