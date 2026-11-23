@@ -1,2 +1,2 @@
 @cpragma once
-@import("extensors.hnorn"); @import("x86_64-linux" "asmgen.hpp"); @import("x86_64-linux" "behaviour.hpp"); @import("extensors.hnorn"); @import("avr_atmega328p" "asmgen.hpp"); @import("avr_atmega328p" "behaviour.hpp");
+@import("extensors.hnorn"); @import("x86_64-linux" "asmgen.hpp"); @import("x86_64-linux" "behaviour.hpp"); @import("extensors.hnorn"); @import("avr_atmega328p" "asmgen.hpp"); @import("avr_atmega328p" "behaviour.hpp"); @import("extensors.hnorn"); @import("xtensa_lx7" "asmgen.hpp"); @import("xtensa_lx7" "behaviour.hpp");

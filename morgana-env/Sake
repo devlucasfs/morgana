@@ -8,3 +8,9 @@ tools: avr-gcc`package, avr-objdump`package, avrdude`package
 compiling: "avr-gcc -nostartfiles -mmcu=atmega328p -Wall -Os -o $elf $file && avr-objcopy -O ihex -R .eeprom $elf $hex"
 linking: "" // Liking phase isnt needded
 upload: "sudo avrdude -F -V -c arduino -p m328p -P $device -b $baudrate -U flash:w:$hex:i"
+
+# xtensa_lx7:none as @arch:os
+tools: /opt/xtensa/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc`package, /opt/xtensa/xtensa-esp-elf/bin/xtensa-esp32s3-elf-objdump`package, esptool`package
+compiling: "/opt/xtensa/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc -nostartfiles -nostdlib -Wl,-T,$ldscript -o $elf $file && esptool --chip esp32s3 elf2image --flash-mode dio --output $bin $elf"
+linking: "" // Linking phase isnt needded
+upload: "esptool --chip esp32s3 --port $device --baud $baudrate write-flash 0x0 $bin"

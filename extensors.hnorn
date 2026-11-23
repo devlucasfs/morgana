@@ -1,3 +1,4 @@
 #define EXTENSORS(E) \
-E("x86_64-linux", x86_64_linux, x86_64_linux_behaviour, "_start") \
-E("avr_atmega328p", avr_atmega328p, avr_atmega328p_behaviour, "_start")
+E("x86_64-linux", x86_64_linux, x86_64_linux_behaviour, "_start")       \
+E("avr_atmega328p", avr_atmega328p, avr_atmega328p_behaviour, "_start") \
+E("xtensa_lx7", xtensa_lx7, xtensa_lx7_behaviour, "app_main")

@@ -1,38 +1,22 @@
 #include "src/codegen/interface.hpp"
 #include "src/externs.hpp"
 
+#include "samar.hpp"
+
 class x86_64_linux_behaviour : public behaviour_interface_methods {
 public:
     using behaviour_interface_methods::behaviour_interface_methods;
 
-    int build(EvaParser *eva, std::string ns, std::filesystem::path path) override {
-        auto build = eva_get_value_from_namespace(eva, ns.c_str(), "compiling");
-        if( build.tag != eva_string ) build_fail("Sake: Invalid build field format.");
+    void build(char *sake, std::filesystem::path path, std::string extra) override {
+        auto _asm = path / "asm.s";
+        auto  obj = path / "m.o";
+        auto  bin = path / "bin";
 
-        std::string cpp(build.data.string);
-        eva_dump_pointer(build);
+        SamarState *samar = __samar_load(sake);
 
-        auto file = path / "asm.s";
-        auto middle = path / "m.o";
-
-        replace(cpp, "file", file);
-        replace(cpp, "output", middle.string());
-
-        return std::system(cpp.c_str());
-    }
-
-    int link(EvaParser *eva, std::string ns, std::filesystem::path path) override {
-        auto linking = eva_get_value_from_namespace(eva, ns.c_str(), "linking");
-        if( linking.tag != eva_string ) build_fail("Sake: Invalid linking field format.");
-
-        std::string cpp(linking.data.string);
-        eva_dump_pointer(linking);
-        auto middle = path / "m.o";
-        auto output = path / "bin";
-
-        replace(cpp, "file", middle.string());
-        replace(cpp, "output", output.string());
-
-        return std::system(cpp.c_str());
+        __samar_push_arg   (samar, (char*) "asm", (char*) _asm.c_str());
+        __samar_push_arg   (samar, (char*) "obj", (char*) obj.c_str());
+        __samar_push_arg   (samar, (char*) "bin", (char*) bin.c_str());
+        __samar_call_runner(samar, (char*) "x86_64::linux::native_bin");
     }
 };

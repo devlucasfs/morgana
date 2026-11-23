@@ -89,6 +89,11 @@ public:
     virtual void loc_store_op(loc_store_op_t op) = 0;
     virtual void loc_get_op(loc_get_op_t op) = 0;
     virtual void loc_set_op(loc_set_op_t op) = 0;
+
+    /* tuples */
+    virtual void extract_op(extract_op_t op) {
+        throw std::runtime_error("extract is not supported by this target");
+    }
 };
 
 class behaviour_interface_methods {
@@ -96,24 +101,12 @@ public:
     explicit behaviour_interface_methods() {};
     virtual ~behaviour_interface_methods() = default;
 
-    void replace(std::string& cpp, const std::string& key, const std::string& value, bool disable_quotes = false) {
-        std::string placeholder = "$" + key;
-        std::string replacement = (disable_quotes) ? value : "\"" + value + "\"";
-
-        size_t pos = 0;
-        while( (pos = cpp.find(placeholder, pos)) != std::string::npos ) {
-            cpp.replace(pos, placeholder.length(), replacement);
-            pos += replacement.length();
-        }
-    };
-
     inline void build_fail(std::string e) {
         throw std::runtime_error(e);
     }
 
-    virtual int link  (EvaParser *eva, std::string ns, std::filesystem::path path) { return 0; };
-    virtual int build (EvaParser *eva, std::string ns, std::filesystem::path path) { return 0; };
-    virtual int upload(EvaParser *eva, std::string ns, std::filesystem::path path, std::string baudrate, std::string device)  {
+    virtual void build (char *sake, std::filesystem::path path, std::string extra) = 0;
+    virtual void upload(char *sake, std::filesystem::path path, std::string baudrate, std::string device, std::string mcu)  {
         throw std::runtime_error("there is no implementation for upload in this target");
     };
 };

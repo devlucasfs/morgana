@@ -14,25 +14,19 @@ store i t9c1a86b81850
 br L734ca0d50aea
 ::L559cd7729344::
 }
+
 unfold i64 main()
 
 void _start() {
-t573d8a686142 = call main()
+    t573d8a686142 = call main()
 }
 
 i64 main() {
-t442195be9968 = io_load 0x4, 8
-t62b55d84e803 = or t442195be9968, 32
-io_store 0x4, 8, t62b55d84e803
-::Lcf9c078dffb2::
-t1c6f58367a1d = io_load 0x5, 8
-t882c544017ec = or t1c6f58367a1d, 32
-io_store 0x5, 8, t882c544017ec
-call sleep(50000)
-t918653d91932 = io_load 0x5, 8
-t6334644ec691 = and t918653d91932, -33
-io_store 0x5, 8, t6334644ec691
-call sleep(50000)
-br Lcf9c078dffb2
-::L8d47b6b4ff4c::
+    io_store 0x60004024, 32, 0x1000000000000
+    ::Lcf9c078dffb2::
+    io_store 0x60004014, 32, 0x10000
+    call sleep(50000)
+    io_store 0x60004018, 32, 0x10000
+    call sleep(50000)
+    br Lcf9c078dffb2
 }

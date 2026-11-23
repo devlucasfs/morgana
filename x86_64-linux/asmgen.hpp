@@ -36,6 +36,7 @@ public:
     const std::string entrypoint = "_start";
 private:
     std::size_t stack_sz = 0;
+    long vscratch = 0;
     std::string current;
     int func = 0;
 
@@ -277,6 +278,121 @@ private:
         if(! dst.empty() && has_ret ) vars[dst] = d;
     }
 
+    long scratch() {
+        if(! vscratch ) vscratch = alloca_bytes(64, 16);
+        return vscratch;
+    }
+
+    // ───────────── SIMD (vreg) ─────────────
+    // Every access is unaligned (movups / vmovups): a slot is only guaranteed 16-byte aligned.
+    // 64-bit vregs are MMX (%mmN): the program is responsible for `emms`.
+
+    std::string vreg_name(const Loc& l) {
+        const std::string want = l.bits == 64  ? "%mm"
+                               : l.bits == 128 ? "%xmm"
+                               : l.bits == 256 ? "%ymm" : "%zmm";
+        std::string n = rname(l.name);
+
+        if( n.size() <= want.size() || n.compare(0, want.size(), want) != 0
+            || ! std::isdigit(static_cast<unsigned char>(n[want.size()])) )
+            throw std::runtime_error("codegen: '" + l.name + "' is not a "
+                                     + std::to_string(l.bits) + "-bit vector register");
+        return n;
+    }
+
+    // register -> memory
+    void vec_spill(const Loc& l, const std::string& m) {
+        std::string r = vreg_name(l);
+        if( l.bits == 64 )       I("movq",    r, m);
+        else if( l.bits == 128 ) I("movups",  r, m);
+        else                     I("vmovups", r, m);
+    }
+
+    // memory -> register
+    void vec_fill(const Loc& l, const std::string& m) {
+        std::string r = vreg_name(l);
+        if( l.bits == 64 )       I("movq",    m, r);
+        else if( l.bits == 128 ) I("movups",  m, r);
+        else                     I("vmovups", m, r);
+    }
+
+    void vec_zero(const Loc& l) {
+        std::string r = vreg_name(l);
+        if( l.bits == 64 )       I("pxor",   r, r);
+        else if( l.bits == 128 ) I("pxor",   r, r);
+        else if( l.bits == 256 ) I("vpxor",  r + ", " + r, r);
+        else                     I("vpxord", r + ", " + r, r);   // AVX-512F
+    }
+
+    static std::string sreg_name(const std::string& s) {
+        std::string n = s;
+        if(! n.empty() && n[0] == '%' ) n.erase(0, 1);
+        for( auto& ch : n ) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return n;
+    }
+
+    static bool is_flags(const std::string& n) { return n == "rflags" || n == "eflags" || n == "flags"; }
+    static bool is_seg(const std::string& n) {
+        return n == "cs" || n == "ds" || n == "es" || n == "fs" || n == "gs" || n == "ss";
+    }
+    static bool is_cr(const std::string& n) {
+        return n.size() == 3 && n[0] == 'c' && n[1] == 'r'
+            && (n[2] == '0' || n[2] == '2' || n[2] == '3' || n[2] == '4' || n[2] == '8');
+    }
+
+    void sreg_check(const std::string& n, std::size_t bits) {
+        bool ok;
+        if( is_flags(n) )                          ok = bits == 16 || bits == 32 || bits == 64;
+        else if( n == "mxcsr" )                    ok = bits == 32;
+        else if( is_seg(n) )                       ok = bits == 16;
+        else if( n == "fsbase" || n == "gsbase" || n == "xcr0" || is_cr(n) ) ok = bits == 64;
+        else throw std::runtime_error("codegen: unknown special register '" + n + "'");
+
+        if(! ok )
+            throw std::runtime_error("codegen: '" + n + "' can't be accessed with " + std::to_string(bits) + " bits");
+    }
+
+    void sreg_read(const Loc& l) {
+        std::string n = sreg_name(l.name);
+        sreg_check(n, l.bits);
+
+        if( is_flags(n) )         { I("pushfq"); I("popq", "%rax"); }
+        else if( n == "mxcsr" )   { long s = scratch(); I("stmxcsr", mem(s)); I("movl", mem(s), "%eax"); }
+        else if( n == "fsbase" )  I("rdfsbase", "%rax");
+        else if( n == "gsbase" )  I("rdgsbase", "%rax");
+        else if( is_seg(n) )      I("movl", "%" + n, "%eax");
+        else if( is_cr(n) )       I("movq", "%" + n, "%rax");
+        else /* xcr0 */           {
+            I("xorl", "%ecx", "%ecx");
+            I("xgetbv");
+            I("shlq", "$32", "%rdx");
+            I("orq",  "%rdx", "%rax");
+        }
+
+        normalize(RAX, l.bits / 8, false);
+    }
+
+    void sreg_write(const Loc& l) {
+        std::string n = sreg_name(l.name);
+        sreg_check(n, l.bits);
+
+        if( is_flags(n) )         { I("pushq", "%rax"); I("popfq"); }
+        else if( n == "mxcsr" )   { long s = scratch(); I("movl", "%eax", mem(s)); I("ldmxcsr", mem(s)); }
+        else if( n == "fsbase" )  I("wrfsbase", "%rax");
+        else if( n == "gsbase" )  I("wrgsbase", "%rax");
+        else if( is_seg(n) ) {
+            if( n == "cs" ) throw std::runtime_error("codegen: cs can't be written with mov");
+            I("movw", "%ax", "%" + n);
+        }
+        else if( is_cr(n) )       I("movq", "%rax", "%" + n);
+        else  {
+            I("movq", "%rax", "%rdx");
+            I("shrq", "$32", "%rdx");
+            I("xorl", "%ecx", "%ecx");
+            I("xsetbv");
+        }
+    }
+
     void loc_read(const Loc& l) {
         switch( l.space ) {
             case Loc::Space::reg:
@@ -301,6 +417,10 @@ private:
                 else if( l.bits == 16 ) { I("xorl", "%eax", "%eax"); I("inw", "%dx", "%ax"); }
                 else                    I("inl", "%dx", "%eax");
                 break;
+
+            case Loc::Space::sreg: sreg_read(l);  break;
+            case Loc::Space::vreg:
+                throw std::runtime_error("codegen: a vector register can't be read as a scalar");
         }
     }
 
@@ -322,6 +442,10 @@ private:
                 I("movl", imm(static_cast<long long>(l.addr)), "%edx");
                 I("out" + sfx(bytes), rn(RAX, bytes), "%dx");
                 break;
+
+            case Loc::Space::sreg: sreg_write(l); break;
+            case Loc::Space::vreg:
+                throw std::runtime_error("codegen: a vector register can't be written as a scalar");
         }
     }
 
@@ -329,7 +453,7 @@ public:
     using codegen_interface_methods::codegen_interface_methods;
 
     void prologue(prologue_t prologue) override {
-        stack_sz = 0;
+        stack_sz = 0, vscratch = 0;
         current  = prologue.identifier;
         vars.clear();
         param_slots.clear();
@@ -677,19 +801,53 @@ public:
     }
 
     void loc_load_op(loc_load_op_t op) override {
-        loc_read(op.loc);
+        if( op.loc.space == Loc::Space::vreg ) {
+            Entry d = make_slot(make_vec(op.loc.bits));
+            vec_spill(op.loc, mem(d.off));
+            vars[op.dst] = d;
+            return;
+        }
 
+        loc_read(op.loc);
         Entry d = make_slot(unsigned_type(op.loc.bits));
         store_reg(RAX, mem(d.off), d.slot_bytes);
         vars[op.dst] = d;
     }
 
     void loc_store_op(loc_store_op_t op) override {
+        if( op.loc.space == Loc::Space::vreg ) {
+            if( op.value.literal ) vec_zero(op.loc);
+            else                   vec_fill(op.loc, mem(var(op.value.text).off));
+            return;
+        }
+
         load_operand(RAX, op.value);
         loc_write(op.loc);
     }
 
     void loc_get_op(loc_get_op_t op) override {
+        if( op.loc.space == Loc::Space::vreg ) {
+            const long s  = scratch();
+            const long at = static_cast<long>(op.lo / 8);
+            const std::size_t n = op.width / 8;
+
+            vec_spill(op.loc, mem(s));
+            Entry d = make_slot(op.type);
+
+            if( n <= 8 ) {
+                if( n == 1 )      I("movzbl", mem(s, at), "%eax");
+                else if( n == 2 ) I("movzwl", mem(s, at), "%eax");
+                else if( n == 4 ) I("movl",   mem(s, at), "%eax");
+                else              I("movq",   mem(s, at), "%rax");
+                store_reg(RAX, mem(d.off), d.slot_bytes);
+            } else {
+                copy("%rbp", -s + at, "%rbp", -d.off, n);
+            }
+
+            vars[op.dst] = d;
+            return;
+        }
+
         loc_read(op.loc);
 
         if( op.lo ) I("shrq", imm(static_cast<long long>(op.lo)), "%rax");
@@ -704,6 +862,27 @@ public:
     }
 
     void loc_set_op(loc_set_op_t op) override {
+        if( op.loc.space == Loc::Space::vreg ) {
+            const long s  = scratch();
+            const long at = static_cast<long>(op.lo / 8);
+            const std::size_t n = op.width / 8;
+
+            vec_spill(op.loc, mem(s));
+
+            if( n <= 8 ) {
+                load_operand(RAX, op.value);
+                store_reg(RAX, mem(s, at), n);
+            } else if( op.value.literal ) {
+                for( std::size_t k = 0; k < n; k += 8 )
+                    I("movq", "$0", mem(s, at + static_cast<long>(k)));
+            } else {
+                copy("%rbp", -var(op.value.text).off, "%rbp", -s + at, n);
+            }
+
+            vec_fill(op.loc, mem(s));
+            return;
+        }
+
         load_operand(R11, op.value);
 
         if( op.width < 64 ) {

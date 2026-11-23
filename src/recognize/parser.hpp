@@ -34,7 +34,9 @@ E(mptr,    "ptr", idek, -1) E(mvoid, "void",  idek,   0) \
 E(unknown, "",    idek,  0)
 
 #define X(m, ...) m,
-enum class morgana_type { TYPE_SET(X) mtuple };
+// mvec: a SIMD register value (v64 / v128 / v256 / v512). It only comes out of
+// `vreg_load` / `vreg_get` and only goes into `vreg_store` / `vreg_set`.
+enum class morgana_type { TYPE_SET(X) mtuple, mvec };
 #undef X
 
 struct morgana_tuple {
@@ -42,8 +44,9 @@ struct morgana_tuple {
 };
 
 struct Ty {
-    morgana_type kind = morgana_type::unknown;
+    morgana_type  kind = morgana_type::unknown;
     morgana_tuple tuple;
+    std::size_t   bits = 0;   // mvec only
 };
 
 inline Ty make_ty(morgana_type k, morgana_tuple t = {}) {
@@ -53,9 +56,17 @@ inline Ty make_ty(morgana_type k, morgana_tuple t = {}) {
     return r;
 }
 
+inline Ty make_vec(std::size_t bits) {
+    Ty r;
+    r.kind = morgana_type::mvec;
+    r.bits = bits;
+    return r;
+}
+
 inline bool is_tuple(const Ty& t) { return t.kind == morgana_type::mtuple; }
 inline bool is_void(const Ty& t)  { return t.kind == morgana_type::mvoid; }
 inline bool is_ptr(const Ty& t)   { return t.kind == morgana_type::mptr; }
+inline bool is_vec(const Ty& t)   { return t.kind == morgana_type::mvec; }
 
 // `int` / `uint` / `ptr` have a size that depends on the target: only the codegen knows it.
 inline std::optional<std::size_t> fixed_size(morgana_type k) {
@@ -92,7 +103,9 @@ inline bool same_tuple(const morgana_tuple& a, const morgana_tuple& b) {
 }
 
 inline bool same_type(const Ty& a, const Ty& b) {
-    return a.kind == b.kind && (a.kind != morgana_type::mtuple || same_tuple(a.tuple, b.tuple));
+    return a.kind == b.kind
+        && (a.kind != morgana_type::mtuple || same_tuple(a.tuple, b.tuple))
+        && (a.kind != morgana_type::mvec   || a.bits == b.bits);
 }
 
 inline std::string type_name(const Ty& t);
@@ -115,6 +128,7 @@ inline std::string tuple_name(const morgana_tuple& t) {
 }
 
 inline std::string type_name(const Ty& t) {
+    if( t.kind == morgana_type::mvec ) return "v" + std::to_string(t.bits);
     return t.kind == morgana_type::mtuple ? tuple_name(t.tuple) : type_name(t.kind);
 }
 
@@ -138,17 +152,20 @@ struct prologue {
         : ret(ret), identifier(identifier), params(params) {};
 };
 
-// an integer literal or a name (`literal` tells which one)
 struct Operand {
     std::string text;
     bool literal = false;
 };
 
+// A register, special register, vector register, mapped io port or memory address.
+//   vreg  : SIMD register                     (64, 128, 256, 512 bits)
+//   io    : address in the I/O space          (0x00..0x3F on AVR)
+//   mem   : address in the DATA space
 struct Loc {
-    enum class Space { reg, io, mem } space = Space::reg;
+    enum class Space { reg, sreg, vreg, io, mem } space = Space::reg;
     std::string   name;
-    std::uint64_t addr = 0;  // io / mem only
-    std::size_t   bits = 0;  // 8, 16, 32 or 64
+    std::uint64_t addr = 0;
+    std::size_t   bits = 0;
 };
 
 struct Param {
@@ -163,7 +180,6 @@ struct ptr_to_op        { std::string dst, target; bool function; };            
 struct move_op          { std::string dst, src; };
 struct load_op          { std::string dst, src; };
 struct pack_op          { std::string dst; Ty type; std::vector<std::string> elements; };
-// args are in source order (the codegen decides the order it emits them in)
 struct call_op          { std::string dst; Ty ret; std::string callee; std::vector<Operand> args; bool sret; };
 struct call_indirect_op { std::string dst; Ty ret; std::string target; bool via_lea; std::vector<Operand> args; bool sret; };
 struct deref_op         { std::string dst; Ty type; std::string src; bool via_lea; };
@@ -182,13 +198,14 @@ struct loc_store_op     { Loc loc; Operand value; };
 struct loc_get_op       { std::string dst; Loc loc; std::size_t lo, width; Ty type; };
 struct loc_set_op       { Loc loc; std::size_t lo, width; Operand value; };
 struct destroyer_op     { std::vector<Param> args; };
+struct extract_op       { std::string dst; Ty type; std::string src; std::size_t index; };
 
 #define INSTRUCTION_SET(E) \
 E(prologue) E(epilogue) \
 E(extern_op) E(unfold_op) E(alloc_op) E(ptr_to_op) E(move_op) E(load_op) E(pack_op) \
 E(call_op) E(call_indirect_op) E(deref_op) E(store_op) E(storep_op) E(ret_op) \
 E(label_op) E(br_op) E(branch_op) E(binary_op) E(cast_op) E(syscall_op) E(str_op) \
-E(loc_load_op) E(loc_store_op) E(loc_get_op) E(loc_set_op) E(destroyer_op)
+E(loc_load_op) E(loc_store_op) E(loc_get_op) E(loc_set_op) E(destroyer_op) E(extract_op)
 
 #define X(id) , id
 using Instruction = std::variant<std::monostate INSTRUCTION_SET(X)>;
@@ -234,8 +251,8 @@ enum class Use {
     callee,        // call / call_indirect target of a direct call
     address_of,    // ptr_to
     store_target,  // store
-    value,         // anything with storage (ret, move, load, call arguments, ...)
-    scalar,        // value that is not a tuple nor void (operands, conditions, casts, ...)
+    value,         // anything with storage (ret, move, load, call arguments, vector loc writes, ...)
+    scalar,        // value that is not a tuple, vector nor void (operands, conditions, casts, ...)
     pointer,       // value of type ptr (deref, storep, call_indirect)
     element,       // tuple element for `pack`
 };
@@ -264,6 +281,7 @@ inline std::string invalid_for(const Symbol& s, Use u) {
     switch( u ) {
         case Use::scalar:
             if( is_tuple(s.type) ) return "can't be a tuple here";
+            if( is_vec(s.type) )   return "can't be a vector here";
             if( is_void(s.type) || s.type.kind == morgana_type::unknown ) return "has no value";
             return "";
 
@@ -272,6 +290,7 @@ inline std::string invalid_for(const Symbol& s, Use u) {
             return "";
 
         case Use::element:
+            if( is_vec(s.type) ) return "can't be a tuple element (vector)";
             if( is_void(s.type) || s.type.kind == morgana_type::unknown )
                 return "can't be a tuple element (zero-sized)";
             return "";
@@ -607,6 +626,10 @@ inline std::vector<Operand> emit_arguments(Ctx& c, const Symbol& fn) {
         auto at = operand_type(c, args[k]);
         const std::string n = std::to_string(k + 1);
 
+        if( at && is_vec(*at) )
+            fail(c, open, "Argument " + n + " ('" + args[k].text
+                          + "') is a vector: vectors can't be passed to functions");
+
         if( ! at && is_tuple(param) )
             fail(c, open, "Argument " + n + " is a tuple, but a literal was received");
 
@@ -827,6 +850,9 @@ inline void parse_ret(Ctx& c, const Tk& at) {
 
     Symbol s = use_as(c, tk, Use::value);
 
+    if( is_vec(s.type) )
+        fail(c, tk, "'" + tk.lex + "' is a vector: vectors can't be returned");
+
     if( tuple_fn && !same_type(s.type, c.current->ret) )
         fail(c, tk, "'" + tk.lex + "' is " + type_name(s.type)
                     + ", but the function returns " + type_name(c.current->ret));
@@ -1010,16 +1036,25 @@ inline void assign_cast(Ctx& c, const std::string& dst) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Registers and mapped io
+//  Registers, special registers, vector registers, mapped io and memory
 //
 //   <n> = reg_load <name>, <bits>              reg_store <name>, <bits>, <value>
 //   <n> = reg_get  <name>, <bits>, <lo>, <w>   reg_set   <name>, <bits>, <lo>, <w>, <value>
 //
-//   io_*  : the same, with an address in the I/O SPACE (0x00..0x3F on AVR)
-//   mem_* : the same, with an address in the DATA SPACE
+//   sreg_* : the same as reg_*, for special / status registers (8..64 bits)
+//   vreg_* : the same, for SIMD registers (64, 128, 256 or 512 bits)
+//              vreg_load / vreg_store      work on the whole register: type v<bits>
+//              vreg_get  / vreg_set        work on one LANE (aligned to its own width):
+//                                          width <= 64 -> uN scalar, width 128/256 -> v<width>
+//              a vector is only written from another vector of the same width,
+//              or from the literal 0 (zeroing)
+//   io_*   : the same as reg_*, with an address in the I/O SPACE (0x00..0x3F on AVR)
+//   mem_*  : the same as reg_*, with an address in the DATA SPACE
+//
+//   <n> = extract <type> <tuple>, <index>      one element of a tuple
 // ═════════════════════════════════════════════════════════════════════════════
 
-enum class loc_kind { reg, io, mem };
+enum class loc_kind { reg, sreg, vreg, io, mem };
 
 inline std::size_t parse_count(Ctx& c, const char* what) {
     Tk tk = need(c, what);
@@ -1028,18 +1063,28 @@ inline std::size_t parse_count(Ctx& c, const char* what) {
     return std::stoul(tk.lex);
 }
 
+inline bool is_vector_loc(const Loc& l) { return l.space == Loc::Space::vreg; }
+
 inline Loc parse_location(Ctx& c, loc_kind kind) {
     Loc r;
-    r.space = kind == loc_kind::reg ? Loc::Space::reg
-            : kind == loc_kind::io  ? Loc::Space::io
-                                    : Loc::Space::mem;
+    switch( kind ) {
+        case loc_kind::reg:  r.space = Loc::Space::reg;  break;
+        case loc_kind::sreg: r.space = Loc::Space::sreg; break;
+        case loc_kind::vreg: r.space = Loc::Space::vreg; break;
+        case loc_kind::io:   r.space = Loc::Space::io;   break;
+        case loc_kind::mem:  r.space = Loc::Space::mem;  break;
+    }
 
-    Tk tk = need(c, kind == loc_kind::io  ? "io address"
-                  : kind == loc_kind::mem ? "memory address"
-                                          : "register name");
+    const char* what = kind == loc_kind::io   ? "io address"
+                     : kind == loc_kind::mem  ? "memory address"
+                     : kind == loc_kind::sreg ? "special register name"
+                     : kind == loc_kind::vreg ? "vector register name"
+                                              : "register name";
+
+    Tk tk = need(c, what);
     std::string head = tk.lex;
 
-    if( kind != loc_kind::reg ) {
+    if( kind == loc_kind::io || kind == loc_kind::mem ) {
         // the lexer may split `0x25` into `0` + `x25`: glue the pieces back until the comma
         if( head[0] == '0' ) {
             while(! c.at_end() && c.peek().lex != "," && head.size() <= 18 )
@@ -1059,8 +1104,12 @@ inline Loc parse_location(Ctx& c, loc_kind kind) {
     Tk bits_tk = c.peek();
     r.bits = parse_count(c, "the size in bits");
 
-    if( r.bits != 8 && r.bits != 16 && r.bits != 32 && r.bits != 64 )
+    if( is_vector_loc(r) ) {
+        if( r.bits != 64 && r.bits != 128 && r.bits != 256 && r.bits != 512 )
+            fail(c, bits_tk, "A vector register is 64, 128, 256 or 512 bits, but received " + std::to_string(r.bits));
+    } else if( r.bits != 8 && r.bits != 16 && r.bits != 32 && r.bits != 64 ) {
         fail(c, bits_tk, "The size must be 8, 16, 32 or 64 bits, but received " + std::to_string(r.bits));
+    }
 
     return r;
 }
@@ -1078,10 +1127,22 @@ inline std::pair<std::size_t, std::size_t> parse_slice(Ctx& c, const Loc& r) {
             "The slice " + std::to_string(lo) + "+" + std::to_string(width)
             + " doesn't fit in " + std::to_string(r.bits) + " bits");
 
+    // vector registers are accessed by whole lanes
+    if( is_vector_loc(r) ) {
+        const bool lane = width == 8 || width == 16 || width == 32 || width == 64
+                       || width == 128 || width == 256;
+        if(! lane )
+            fail(c, w_tk, "A vector lane is 8, 16, 32, 64, 128 or 256 bits wide, but received "
+                          + std::to_string(width));
+        if( lo % width != 0 )
+            fail(c, w_tk, "A lane of " + std::to_string(width) + " bits must start at a multiple of "
+                          + std::to_string(width) + ", but starts at bit " + std::to_string(lo));
+    }
+
     return { lo, width };
 }
 
-// the value read from a location is always an unsigned integer of its width
+// the value read from a scalar location is always an unsigned integer of its width
 inline Ty unsigned_type(std::size_t bits) {
     switch( bits ) {
         case 8:  return make_ty(morgana_type::mu8);
@@ -1095,43 +1156,115 @@ inline std::size_t slice_bits(std::size_t width) {
     return width <= 8 ? 8 : width <= 16 ? 16 : width <= 32 ? 32 : 64;
 }
 
+// type of a slice of `loc`: a vector lane wider than 64 bits is itself a vector
+inline Ty slice_type(const Loc& loc, std::size_t width) {
+    if( is_vector_loc(loc) && width > 64 ) return make_vec(width);
+    return unsigned_type(slice_bits(width));
+}
+
 inline loc_kind kind_of(const std::string& statement) {
-    if( statement.rfind("io_",  0) == 0 ) return loc_kind::io;
-    if( statement.rfind("mem_", 0) == 0 ) return loc_kind::mem;
+    if( statement.rfind("sreg_", 0) == 0 ) return loc_kind::sreg;
+    if( statement.rfind("vreg_", 0) == 0 ) return loc_kind::vreg;
+    if( statement.rfind("io_",   0) == 0 ) return loc_kind::io;
+    if( statement.rfind("mem_",  0) == 0 ) return loc_kind::mem;
     return loc_kind::reg;
 }
 
-// reg_store <name>, <bits>, <value>   |   io_store ...   |   mem_store ...
+// `reg_<op>`, `sreg_<op>`, `vreg_<op>`, `io_<op>` or `mem_<op>`
+inline bool is_loc_statement(const std::string& s, const char* op) {
+    static const char* families[] = { "reg_", "sreg_", "vreg_", "io_", "mem_" };
+    for( const char* f : families )
+        if( s == std::string(f) + op ) return true;
+    return false;
+}
+
+// the value written to a location.
+//   want_vec: the destination is a vector of `vbits` bits -> a vector of that width or the literal 0
+//   otherwise: a scalar (name or integer literal)
+inline Operand read_loc_value(Ctx& c, bool want_vec, std::size_t vbits) {
+    Tk tk = need(c, "value");
+    Operand op{ tk.lex, is_number(tk.lex) };
+
+    if( op.literal ) {
+        if( want_vec && !is_zero_literal(op.text) )
+            fail(c, tk, "A vector can only be written from another vector or from the literal 0 (zeroing), "
+                        "but received " + op.text);
+        return op;
+    }
+
+    Symbol s = use_as(c, tk, want_vec ? Use::value : Use::scalar);
+
+    if( want_vec && !(is_vec(s.type) && s.type.bits == vbits) )
+        fail(c, tk, "'" + tk.lex + "' is " + type_name(s.type)
+                    + ", but a v" + std::to_string(vbits) + " is needed here");
+
+    return op;
+}
+
+// reg_store <name>, <bits>, <value>   |   sreg_store / vreg_store / io_store / mem_store ...
 inline void parse_loc_store(Ctx& c, loc_kind kind) {
     Loc loc = parse_location(c, kind);
     expect(c, {","}, "A store needs a value: name, bits, value");
-    c.emit(loc_store_op{ loc, read_operand(c, "value") });
+    Operand value = read_loc_value(c, is_vector_loc(loc), loc.bits);
+    c.emit(loc_store_op{ loc, value });
 }
 
-// reg_set <name>, <bits>, <lo>, <width>, <value>   |   io_set ...   |   mem_set ...
+// reg_set <name>, <bits>, <lo>, <width>, <value>   |   sreg_set / vreg_set / io_set / mem_set ...
 inline void parse_loc_set(Ctx& c, loc_kind kind) {
     Loc loc = parse_location(c, kind);
     auto [lo, width] = parse_slice(c, loc);
     expect(c, {","}, "A set needs a value: name, bits, lo, width, value");
-    c.emit(loc_set_op{ loc, lo, width, read_operand(c, "value") });
+    Operand value = read_loc_value(c, is_vector_loc(loc) && width > 64, width);
+    c.emit(loc_set_op{ loc, lo, width, value });
 }
 
-// <n> = reg_load <name>, <bits>   |   io_load <addr>, <bits>   |   mem_load <addr>, <bits>
+// <n> = reg_load <name>, <bits>   |   sreg_load / vreg_load / io_load <addr> / mem_load <addr> ...
 inline void assign_loc_load(Ctx& c, const std::string& dst, loc_kind kind) {
     Loc loc = parse_location(c, kind);
 
+    Ty t = is_vector_loc(loc) ? make_vec(loc.bits) : unsigned_type(loc.bits);
     c.emit(loc_load_op{ dst, loc });
-    c.sym.push(dst, value_symbol(unsigned_type(loc.bits)));
+    c.sym.push(dst, value_symbol(t));
 }
 
-// <n> = reg_get <name>, <bits>, <lo>, <width>   |   io_get ...   |   mem_get ...
+// <n> = reg_get <name>, <bits>, <lo>, <width>   |   sreg_get / vreg_get / io_get / mem_get ...
 inline void assign_loc_get(Ctx& c, const std::string& dst, loc_kind kind) {
     Loc loc = parse_location(c, kind);
     auto [lo, width] = parse_slice(c, loc);
 
-    Ty t = unsigned_type(slice_bits(width));
+    Ty t = slice_type(loc, width);
     c.emit(loc_get_op{ dst, loc, lo, width, t });
     c.sym.push(dst, value_symbol(t));
+}
+
+// <name> = extract <type> <tuple>, <index>
+inline void assign_extract(Ctx& c, const std::string& dst) {
+    Tk type_tk = c.peek();
+    Ty type = need_type(c, "an element type");
+    Tk src = need(c, "tuple name");
+    expect(c, {","}, "extract needs an index: extract type tuple, index");
+    Tk idx_tk = c.peek();
+    std::size_t index = parse_count(c, "the element index");
+
+    if( is_void(type) )
+        fail(c, type_tk, "extract can't read a zero-sized type");
+
+    Symbol s = use_as(c, src, Use::value);
+    if(! is_tuple(s.type) )
+        fail(c, src, "'" + src.lex + "' is a " + type_name(s.type) + ", extract needs a tuple");
+
+    const auto& els = s.type.tuple.elements;
+    if( index >= els.size() )
+        fail(c, idx_tk, "Index " + std::to_string(index) + " is out of range: " + type_name(s.type)
+                        + " has " + std::to_string(els.size()) + " elements");
+
+    Ty expected = make_ty(els[index].first, els[index].second);
+    if(! same_type(expected, type) )
+        fail(c, type_tk, "Element " + std::to_string(index) + " of '" + src.lex + "' is "
+                         + type_name(expected) + ", not " + type_name(type));
+
+    c.emit(extract_op{ dst, type, src.lex, index });
+    c.sym.push(dst, value_symbol(type));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1153,6 +1286,7 @@ inline void parse_assignment(Ctx& c, const Tk& name_tk) {
     if( s == "ptr_to" )         return assign_ptr_to(c, name);
     if( s == "move" )           return assign_move(c, name);
     if( s == "pack" )           return assign_pack(c, name);
+    if( s == "extract" )        return assign_extract(c, name);
     if( s == "load" )           return assign_load(c, name);
     if( s == "call" )           return assign_call(c, name);
     if( s == "call_indirect" )  return assign_call_indirect(c, name);
@@ -1161,8 +1295,8 @@ inline void parse_assignment(Ctx& c, const Tk& name_tk) {
     if( s == "str" )            return assign_str(c, name);
     if( s == "cast" )           return assign_cast(c, name);
 
-    if( s == "reg_load" || s == "io_load" || s == "mem_load" ) return assign_loc_load(c, name, kind_of(s));
-    if( s == "reg_get"  || s == "io_get"  || s == "mem_get"  ) return assign_loc_get(c, name, kind_of(s));
+    if( is_loc_statement(s, "load") ) return assign_loc_load(c, name, kind_of(s));
+    if( is_loc_statement(s, "get")  ) return assign_loc_get(c, name, kind_of(s));
 
     fail(c, st, "Unknown statement '" + s + "' after '='");
 }
@@ -1182,14 +1316,18 @@ inline Ins parser(std::filesystem::path path, const std::vector<Tk>& tks) {
         { "storep",        parse_storep        },
         { "br",            parse_br            },
         { "call_indirect", parse_call_indirect },
-        { "brez",     +[](Ctx& c) { parse_branch(c, false); } },
-        { "brnz",     +[](Ctx& c) { parse_branch(c, true);  } },
-        { "reg_store",+[](Ctx& c) { parse_loc_store(c, loc_kind::reg); } },
-        { "io_store", +[](Ctx& c) { parse_loc_store(c, loc_kind::io);  } },
-        { "mem_store",+[](Ctx& c) { parse_loc_store(c, loc_kind::mem); } },
-        { "reg_set",  +[](Ctx& c) { parse_loc_set(c, loc_kind::reg);   } },
-        { "io_set",   +[](Ctx& c) { parse_loc_set(c, loc_kind::io);    } },
-        { "mem_set",  +[](Ctx& c) { parse_loc_set(c, loc_kind::mem);   } },
+        { "brez",      +[](Ctx& c) { parse_branch(c, false); } },
+        { "brnz",      +[](Ctx& c) { parse_branch(c, true);  } },
+        { "reg_store", +[](Ctx& c) { parse_loc_store(c, loc_kind::reg);  } },
+        { "sreg_store",+[](Ctx& c) { parse_loc_store(c, loc_kind::sreg); } },
+        { "vreg_store",+[](Ctx& c) { parse_loc_store(c, loc_kind::vreg); } },
+        { "io_store",  +[](Ctx& c) { parse_loc_store(c, loc_kind::io);   } },
+        { "mem_store", +[](Ctx& c) { parse_loc_store(c, loc_kind::mem);  } },
+        { "reg_set",   +[](Ctx& c) { parse_loc_set(c, loc_kind::reg);    } },
+        { "sreg_set",  +[](Ctx& c) { parse_loc_set(c, loc_kind::sreg);   } },
+        { "vreg_set",  +[](Ctx& c) { parse_loc_set(c, loc_kind::vreg);   } },
+        { "io_set",    +[](Ctx& c) { parse_loc_set(c, loc_kind::io);     } },
+        { "mem_set",   +[](Ctx& c) { parse_loc_set(c, loc_kind::mem);    } },
     };
 
     while(! c.at_end() ) {

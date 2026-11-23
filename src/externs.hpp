@@ -28,10 +28,6 @@ typedef struct EvaValue {
 } EvaValue;
 
 extern "C" {
-    int set(char* f);
-    int setoutput(char* f);
-    int prepare(void);
-
     EvaParser *eva_make_parser(const char *path);
     void eva_dump_pointer(EvaValue value);
     EvaValue eva_get_value_from_namespace(EvaParser *parser, const char *ns, const char *name);
