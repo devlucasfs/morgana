@@ -5,7 +5,7 @@
 class avr_atmega328p_behaviour : public behaviour_interface_methods {
     using behaviour_interface_methods::behaviour_interface_methods;
 
-    void build(char *sake, std::filesystem::path path, std::string extra) override {
+    void build(char *sake, std::filesystem::path path, std::string output, std::string extra) override {
         auto path_elf  = path / "avr.elf",
              path_hex  = path / "avr.hex",
              path_file = path / "asm.s";

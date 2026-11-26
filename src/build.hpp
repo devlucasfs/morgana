@@ -8,7 +8,7 @@
 #include "codegen/make.hpp"
 
 extern "C"
-void mangled(build) (cstring cfile, cstring ctarget, cstring extensor, cstring sake, cstring extra) try_pattern({
+void mangled(build) (cstring cfile, cstring ctarget, cstring extensor, cstring sake, cstring extra, cstring format) try_pattern({
     std::string file(cfile);
     std::string target(ctarget);
 
@@ -23,5 +23,5 @@ void mangled(build) (cstring cfile, cstring ctarget, cstring extensor, cstring s
     std::fclose(output);
 
     auto behaviour = behaviours(extensor);
-    behaviour->build((char*)sake, target_folder, extra);
+    behaviour->build((char*)sake, target_folder, format, extra);
 })

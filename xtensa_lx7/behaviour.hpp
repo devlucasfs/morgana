@@ -7,16 +7,16 @@
 class xtensa_lx7_behaviour : public behaviour_interface_methods {
     using behaviour_interface_methods::behaviour_interface_methods;
 
-    void build(char *sake, std::filesystem::path path, std::string extra="esp32") override {
+    void build(char *sake, std::filesystem::path path, std::string output, std::string extra="esp32") override {
         auto path_file = path / "asm.s";
         auto file = path_file.string();
 
         SamarState *samar = __samar_load(sake);
-        auto runner = "xtensa_lx7::" + extra + "::native_bin";
+        auto identifier = ("xtensa_lx7::" + extra + "::" + runner(output));
 
         __samar_push_arg   (samar, (char*) "target", (char*) path.string().c_str());
         __samar_push_arg   (samar, (char*) "file",   (char*) file.c_str());
-        __samar_call_runner(samar, (char*) runner.c_str());
+        __samar_call_runner(samar, (char*) identifier.c_str());
     }
 
     void upload(char *sake, std::filesystem::path path, std::string baudrate, std::string device, std::string mcu="esp32") override {

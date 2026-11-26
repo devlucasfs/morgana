@@ -935,17 +935,21 @@ class x86_64_linux_behaviour : public behaviour_interface_methods {
 public:
     using behaviour_interface_methods::behaviour_interface_methods;
 
-    void build(char *sake, std::filesystem::path path, std::string extra) override {
-        auto _asm = path / "asm.s";
-        auto  obj = path / "m.o";
-        auto  bin = path / "bin";
+    void build(char *sake, std::filesystem::path path, std::string output, std::string extra) override {
+        auto _asm     = path / "asm.s";
+        auto  obj     = path / "m.o";
+        auto  bin     = path / "bin";
+        auto  archive = path / "archive.a";
+        auto  shared  = path / "shared.so";
 
         SamarState *samar = __samar_load(sake);
 
-        __samar_push_arg   (samar, (char*) "asm", (char*) _asm.c_str());
-        __samar_push_arg   (samar, (char*) "obj", (char*) obj.c_str());
-        __samar_push_arg   (samar, (char*) "bin", (char*) bin.c_str());
-        __samar_call_runner(samar, (char*) "x86_64::linux::native_bin");
+        __samar_push_arg   (samar, (char*) "asm",     (char*) _asm.c_str());
+        __samar_push_arg   (samar, (char*) "obj",     (char*) obj.c_str());
+        __samar_push_arg   (samar, (char*) "bin",     (char*) bin.c_str());
+        __samar_push_arg   (samar, (char*) "archive", (char*) archive.c_str());
+        __samar_push_arg   (samar, (char*) "shared",  (char*) shared.c_str());
+        __samar_call_runner(samar, (char*) ("x86_64::linux::" + runner(output)).c_str());
     }
 };  
 
@@ -2215,7 +2219,7 @@ inline std::size_t avr_atmega328p::align_of(const Ty&) {
 class avr_atmega328p_behaviour : public behaviour_interface_methods {
     using behaviour_interface_methods::behaviour_interface_methods;
 
-    void build(char *sake, std::filesystem::path path, std::string extra) override {
+    void build(char *sake, std::filesystem::path path, std::string output, std::string extra) override {
         auto path_elf  = path / "avr.elf",
              path_hex  = path / "avr.hex",
              path_file = path / "asm.s";
@@ -3533,16 +3537,16 @@ inline std::size_t xtensa_lx7::align_of(const Ty& t) {
 class xtensa_lx7_behaviour : public behaviour_interface_methods {
     using behaviour_interface_methods::behaviour_interface_methods;
 
-    void build(char *sake, std::filesystem::path path, std::string extra="esp32") override {
+    void build(char *sake, std::filesystem::path path, std::string output, std::string extra="esp32") override {
         auto path_file = path / "asm.s";
         auto file = path_file.string();
 
         SamarState *samar = __samar_load(sake);
-        auto runner = "xtensa_lx7::" + extra + "::native_bin";
+        auto identifier = ("xtensa_lx7::" + extra + "::" + runner(output));
 
         __samar_push_arg   (samar, (char*) "target", (char*) path.string().c_str());
         __samar_push_arg   (samar, (char*) "file",   (char*) file.c_str());
-        __samar_call_runner(samar, (char*) runner.c_str());
+        __samar_call_runner(samar, (char*) identifier.c_str());
     }
 
     void upload(char *sake, std::filesystem::path path, std::string baudrate, std::string device, std::string mcu="esp32") override {

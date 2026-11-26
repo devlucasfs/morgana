@@ -7,6 +7,7 @@
 
 #include "../recognize/parser.hpp"
 #include "externs.hpp"
+#include "hash.hpp"
 
 inline const char *c(const std::string &s) {
     return s.c_str();
@@ -105,7 +106,16 @@ public:
         throw std::runtime_error(e);
     }
 
-    virtual void build (char *sake, std::filesystem::path path, std::string extra) = 0;
+    std::string runner(std::string name) {
+        switch(hash(name)) {
+        case const_hash("static-archive"): return "static_archive";
+        case const_hash("shared-object"):  return "shared_object";
+        case const_hash("native-bin"):     return "native_bin";
+        default: return name;
+        }
+    }
+
+    virtual void build (char *sake, std::filesystem::path path, std::string output, std::string extra) = 0;
     virtual void upload(char *sake, std::filesystem::path path, std::string baudrate, std::string device, std::string mcu)  {
         throw std::runtime_error("there is no implementation for upload in this target");
     };
