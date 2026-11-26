@@ -115,6 +115,8 @@ public:
         }
     }
 
+    std::vector<lib_spec> libs;
+    virtual bool supports_libs() const { return false; }
     virtual void build (char *sake, std::filesystem::path path, std::string output, std::string extra) = 0;
     virtual void upload(char *sake, std::filesystem::path path, std::string baudrate, std::string device, std::string mcu)  {
         throw std::runtime_error("there is no implementation for upload in this target");

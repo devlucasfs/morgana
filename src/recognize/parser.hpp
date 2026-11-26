@@ -148,8 +148,9 @@ struct prologue {
     std::string identifier;
     std::vector<Ty> params;
     Ty ret;
-    prologue(Ty ret, std::string identifier, std::vector<Ty> params)
-        : ret(ret), identifier(identifier), params(params) {};
+    bool exported = false;
+    prologue(Ty ret, std::string identifier, std::vector<Ty> params, bool exported = false)
+        : ret(ret), identifier(identifier), params(params), exported(exported) {};
 };
 
 struct Operand {
@@ -733,8 +734,8 @@ inline void parse_unfold(Ctx& c) {
     c.sym.push(name.lex, Symbol{ sym_kind::unfold, ret, params });
 }
 
-// <type> <name>(<types>) {
-inline void parse_function(Ctx& c, const Tk& first, Ty ret) {
+// [export] <type> <name>(<types>) {
+inline void parse_function(Ctx& c, const Tk& first, Ty ret, bool exported = false) {
     if( c.current )
         fail(c, first, "A function can't be declared inside another function ('" + c.current_name + "' is still open).");
 
@@ -766,7 +767,7 @@ inline void parse_function(Ctx& c, const Tk& first, Ty ret) {
 
     c.current      = Fn{ ret, params };
     c.current_name = name.lex;
-    c.emit(prologue(ret, name.lex, std::move(params)));
+    c.emit(prologue(ret, name.lex, std::move(params), exported));
 }
 
 // }
@@ -1336,6 +1337,18 @@ inline Ins parser(std::filesystem::path path, const std::vector<Tk>& tks) {
         if( tk.lex == "ret" )  { c.next(); parse_ret(c, tk);        continue; }
         if( tk.lex == "}" )    { c.next(); parse_close(c, tk);      continue; }
         if( tk.lex == "@_" )   { c.next(); parse_destroyer(c, tk);  continue; }
+
+        if( tk.lex == "export" ) {
+            c.next();
+
+            auto ret = try_type(c);
+            if(! ret )
+                fail(c, c.peek(), "Expected a function declaration after 'export', but received '"
+                                  + (c.at_end() ? std::string("<end of file>") : c.peek().lex) + "'");
+
+            parse_function(c, tk, *ret, true);
+            continue;
+        }
 
         if( auto f = statements.find(tk.lex); f != statements.end() ) {
             c.next();

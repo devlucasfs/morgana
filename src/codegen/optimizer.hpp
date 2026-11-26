@@ -23,6 +23,7 @@ namespace opt_detail {
         std::string name;
         std::vector<std::string> refs;
         bool live = false;
+        bool exported = false;   // `export`: always kept, even if nothing references it
     };
 }
 
@@ -47,7 +48,7 @@ inline Ins optimize(Ins ins, const opt_options& opt = {}) {
         const auto& it = ins.set[i];
 
         if( const auto* p = std::get_if<prologue>(&it) ) {
-            funcs.push_back({ p->identifier, {}, false });
+            funcs.push_back({ p->identifier, {}, false, p->exported });
             open = funcs.size() - 1;
             by_name[p->identifier].push_back(open);
             owner[i] = open;
@@ -88,6 +89,13 @@ inline Ins optimize(Ins ins, const opt_options& opt = {}) {
 
     for( const auto& root : opt.roots )   mark(root);
     for( const auto& name : global_refs ) mark(name);
+
+    for( std::size_t id = 0; id < funcs.size(); id++ ) {
+        if( funcs[id].exported && !funcs[id].live ) {
+            funcs[id].live = true;
+            work.push_back(id);
+        }
+    }
 
     while(!work.empty()) {
         std::size_t id = work.back();

@@ -1,0 +1,184 @@
+
+// Handles missing system packages declared through the dependencies section.
+// The rule is only applicable when the host platform is x86_64 Linux.
+// The {@} placeholder is replaced with the name of the missing dependency.
+rule package {
+   when $os -eq "x86_64-linux" {
+       // Abort the build and inform the user that the required package is missing.
+       // Suggest a possible installation command using the Arch Linux package manager.
+       // The build process terminates with the exit status defined by Samar's die statement.
+       die "{@} is not installed, but it was declared in the Sake as a `package`.\n"
+           "Try installing it with:\n\~> e.g. sudo pacman -S {@}"
+   }
+}
+
+// Handles missing Espressif development tools and toolchains.
+// This rule is referenced by dependencies required for ESP32 development.
+// It does not attempt to install anything; it terminates the build with an explanatory error.
+rule espressif {
+   die "You don't have expressif toolchain intalled. Or is out of your PATHs. Download it or update our paths.\n"
+}
+
+// Declares the AVR ATmega328P microcontroller as a supported target architecture.
+// This architecture is used by boards such as the Arduino Uno.
+architecture avr_atmega328p
+
+avr_atmega328p::arduino {
+   dependencies {
+       when $os -eq "x86_64-linux" {
+           // avr-gcc provides the AVR compiler and assembler toolchain.
+           // It is used to produce executable code for the ATmega328P.
+           // The package rule is executed if the tool cannot be found.
+           "avr-gcc"     => package
+
+           // avr-objcopy converts the generated ELF executable into Intel HEX format.
+           // The HEX file is the format expected by the AVR flashing utility.
+           // The package rule handles the case where this utility is unavailable.
+           "avr-objcopy" => package
+
+           // avr-objdump provides disassembly and inspection capabilities for AVR binaries.
+           // It is useful for inspecting generated machine code and debugging builds.
+           // It is declared as a required dependency for this target.
+           "avr-objdump" => package
+
+           // avrdude communicates with AVR microcontrollers through supported programmers.
+           // It is used by the upload runner to write the generated firmware into flash memory.
+           // The package rule reports an installation error if avrdude is missing.
+           "avrdude"     => package
+       }
+   }
+
+   runner native_bin {
+       when $os -eq "x86_64-linux" {
+           // Assemble and link the AVR assembly source into an ELF executable.
+           // -nostartfiles prevents the compiler driver from linking the default startup files.
+           // -mmcu selects the ATmega328P target, while -Os enables size optimization.
+           `avr-gcc -nostartfiles -mmcu=atmega328p -Wall -Os -o {elf} {asm}`
+
+           // Convert the generated ELF executable into an Intel HEX firmware image.
+           // The .eeprom section is explicitly excluded from the resulting image.
+           // The generated HEX file is the artifact consumed by the upload runner.
+           `avr-objcopy -O ihex -R .eeprom {elf} {hex}`
+       }
+   }
+
+   runner upload {
+       when $os -eq "x86_64-linux" {
+           // Invoke avrdude to communicate with the connected ATmega328P.
+           // -c arduino selects the Arduino bootloader protocol, while -p selects the MCU.
+           // The device port, baud rate and HEX image are supplied through runner arguments.
+           `sudo avrdude -F -V -c arduino -p m328p -P {device} -b {baudrate} -U flash:w:{hex}:i`
+       }
+   }
+}
+
+// Declares the Xtensa LX7 architecture as a supported target architecture.
+// This target is used by the ESP32 family of microcontrollers.
+architecture xtensa_lx7
+
+xtensa_lx7::esp32 {
+   dependencies {
+       when $os -eq "x86_64-linux" {
+           // esptool provides communication and flashing utilities for Espressif devices.
+           // It is part of the tooling commonly used to interact with ESP32 microcontrollers.
+           // The espressif rule handles the missing-toolchain case.
+           esptool  => espressif
+
+           // idf.py is the command-line frontend of the ESP-IDF build system.
+           // It manages project configuration, target selection, compilation and flashing.
+           // The espressif rule reports the missing ESP-IDF environment.
+           "idf.py" => espressif
+       }
+   }
+
+   runner native_bin {
+       when $os -eq "x86_64-linux" {
+           // Enter the target directory and create an ESP-IDF project only if it does not exist.
+           // Copy the generated assembly source into an ESP-IDF component and create its CMake files.
+           // Finally, select the ESP32 target and invoke the ESP-IDF build system.
+           `cd {target} &&([ -d carla-idf ] || idf.py create-project carla-idf) && cd carla-idf && mkdir -p src main && cp {file} src/main.S && echo 'idf_component_register(SRCS ../src/main.S INCLUDE_DIRS .)' > main/CMakeLists.txt && echo 'cmake_minimum_required(VERSION 3.16)' > CMakeLists.txt  && echo 'include($ENV{IDF_PATH}/tools/cmake/project.cmake)' >> CMakeLists.txt && echo 'project(carla-idf)' >> CMakeLists.txt  && idf.py set-target esp32 && idf.py build`
+       }
+   }
+
+   runner upload {
+       when $os -eq "x86_64-linux" {
+           // Enter the ESP-IDF project directory associated with the current target.
+           // Pass the selected device port to idf.py so the correct ESP32 is accessed.
+           // The flash command builds the required flashing operation and uploads the firmware.
+           `cd {folder} && idf.py -p {device} flash`
+       }
+   }
+}
+
+// Declares x86_64 as a supported target architecture.
+// Namespaces associated with this architecture can define their own dependencies and runners.
+architecture x86_64
+
+x86_64::linux {
+   dependencies {
+       when $os -eq "x86_64-linux" {
+           // GNU assembler translates the generated assembly source into machine code.
+           // It produces the intermediate object file consumed by the linker or archiver.
+           // The package rule handles missing assembler installations.
+           as => package
+
+           // GNU linker combines object files into executable or shared binaries.
+           // It is responsible for resolving symbols and producing the final linked output.
+           // The package rule reports an error if the linker is unavailable.
+           ld => package
+
+           // GNU archiver creates and manages static libraries from object files.
+           // It is used by the static_archive runner to produce .a archive files.
+           // The package rule handles missing archiver installations.
+           ar => package
+       }
+   }
+
+   runner native_bin {
+       when $os -eq "x86_64-linux" {
+           // Assemble the generated source file into an intermediate object file.
+           // The object file contains machine code and the associated symbol information.
+           // This artifact is then passed to the linker to generate the executable.
+           `as {asm} -o {obj}`
+
+           // Link the generated object file into a standalone executable.
+           // The output path is provided through the {bin} runner argument.
+           // The resulting binary is the native executable for the x86_64 Linux target.
+           // {libs} expands to the linker flags for the libraries declared in target.eva
+           // (-L/-l, plus -rpath and the dynamic loader when shared libs are used).
+           // It is an empty string when the artifact declares no libs.
+           `ld {obj} {libs} -o {bin}`
+       }
+   }
+
+   runner static_archive {
+       when $os -eq "x86_64-linux" {
+           // Assemble the source file into an object file before creating the archive.
+           // This separates compilation from the library packaging operation.
+           // The resulting object file is used as the archive's input.
+           `as {asm} -o {obj}`
+
+           // Create or update a static archive containing the generated object file.
+           // The r modifier inserts or replaces members, while s generates the symbol index.
+           // The resulting archive is written to the path provided by {archive}.
+           // Note: `ar` takes the archive first and the members after it (there is no -o).
+           // Libraries are not applied here: an archive is only linked later, by its consumer.
+           `ar rcs {archive} {obj}`
+       }
+   }
+
+   runner shared_object {
+       when $os -eq "x86_64-linux" {
+           // Assemble the source file into a relocatable object file.
+           // This object file is the input used by the shared-library linker.
+           // The intermediate artifact is provided through the {obj} argument.
+           `as {asm} -o {obj}`
+
+           // Link the object file into a shared library.
+           // The -shared option instructs the linker to produce a shared object instead of an executable.
+           // The resulting shared binary is written to the path provided by {shared}.
+           // {libs} records the declared libraries as dependencies of the shared object.
+           `ld -shared {obj} {libs} -o {shared}`
+       }
+   }
+}
